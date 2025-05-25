@@ -1,4 +1,3 @@
-
 // catastro-proxy.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -27,12 +26,19 @@ async function fetchParcelDetailsAndRespond(
   );
   detalleUrl.searchParams.append('RC', refCat);
 
+  console.log(`>>> CAT DETAILS URL: ${detalleUrl.toString()}`);
+
   try {
     const detRes = await fetch(detalleUrl.toString(), {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
-    const detJson = await detRes.json();
+
+    const detBodyText = await detRes.text();
+    console.log(`>>> CAT DETAILS STATUS: ${detRes.status}`);
+    console.log(`>>> CAT DETAILS BODY: ${detBodyText}`);
+    
+    const detJson = JSON.parse(detBodyText); // Parse after logging
     const detResult = detJson.Consulta_DNPRCResult;
 
     let finalMessage = contextMessage || '';
@@ -64,7 +70,7 @@ async function fetchParcelDetailsAndRespond(
     if (detResult?.dt?.loc?.dir?.tv) direccionCompletaArr.push(detResult.dt.loc.dir.tv);
     if (detResult?.dt?.loc?.dir?.nv) direccionCompletaArr.push(detResult.dt.loc.dir.nv);
     if (detResult?.dt?.loc?.dir?.pnp) direccionCompletaArr.push(`Nº ${detResult.dt.loc.dir.pnp}`);
-     if (detResult?.dt?.loc?.dir?.kilometro) direccionCompletaArr.push(`Km ${detResult.dt.loc.dir.kilometro}`);
+    if (detResult?.dt?.loc?.dir?.kilometro) direccionCompletaArr.push(`Km ${detResult.dt.loc.dir.kilometro}`);
 
 
     const direccionCompleta = direccionCompletaArr.length > 0 ? direccionCompletaArr.join(' ') : direccionLDT;
@@ -125,10 +131,15 @@ async function buscarPorAnillos(
       url.searchParams.append('CoorX', intentoX.toFixed(2));
       url.searchParams.append('CoorY', intentoY.toFixed(2));
       url.searchParams.append('SRS', srs);
+      
+      console.log(`>>> CAT RING URL: ${url.toString()}`);
 
       try {
-        // console.log(`Ring search: intentando en X=${intentoX.toFixed(2)}, Y=${intentoY.toFixed(2)} (radio ${r}m)`);
         const rres = await fetch(url.toString(), { method: 'GET', headers: { 'Accept': 'application/json' } });
+        
+        const ringBodyText = await rres.text();
+        console.log(`>>> CAT RING STATUS (${r}m, ${theta}rad): ${rres.status}`);
+        console.log(`>>> CAT RING BODY (${r}m, ${theta}rad): ${ringBodyText}`);
 
         if (rres.status === 404) continue; // No luck here, try next point
 
@@ -137,7 +148,7 @@ async function buscarPorAnillos(
           continue; // Try next point
         }
 
-        const json = await rres.json();
+        const json = JSON.parse(ringBodyText); // Parse after logging
         const result = json.Consulta_RCCOOR_DistanciaResult;
 
         if (result?.control?.cuerr === 0 && result?.coordenadas_distancias?.coordd) {
@@ -200,11 +211,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   distanciaUrl.searchParams.append('CoorY', String(utmY));
   distanciaUrl.searchParams.append('SRS', srs);
 
+  console.log(`>>> CAT DIST URL (Initial): ${distanciaUrl.toString()}`);
+
   try {
     const distRes = await fetch(distanciaUrl.toString(), {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
+
+    const distBodyText = await distRes.text();
+    console.log(`>>> CAT DIST STATUS (Initial): ${distRes.status}`);
+    console.log(`>>> CAT DIST BODY (Initial): ${distBodyText}`);
+
 
     if (distRes.status === 404) {
       console.warn(`Consulta_RCCOOR_Distancia inicial devolvió 404 para ${utmX}, ${utmY}. Iniciando búsqueda por anillos.`);
@@ -219,7 +237,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // --- Process non-404 responses from initial Consulta_RCCOOR_Distancia ---
-    const distJson = await distRes.json();
+    const distJson = JSON.parse(distBodyText); // Parse after logging
     const distResult = distJson.Consulta_RCCOOR_DistanciaResult;
 
     if (!distRes.ok || (distResult?.control?.cuerr > 0)) {
@@ -290,4 +308,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
-

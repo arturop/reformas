@@ -5,16 +5,18 @@ Esta aplicación te permite obtener información catastral básica (referencia y
 ## Funcionalidades
 
 *   Obtiene tus coordenadas geográficas (latitud y longitud) usando la API de geolocalización del navegador.
-*   Envía las coordenadas (actualmente de ejemplo) a un proxy en Vercel.
-*   El proxy consulta el servicio web SOAP del Catastro para obtener información asociada a esas coordenadas.
-*   Muestra la referencia catastral y la dirección si están disponibles.
-*   Manejo de errores de geolocalización, del proxy y del servicio del Catastro.
+*   Transforma las coordenadas geográficas a UTM EPSG:23030 (ED50 / UTM zona 30N), que es el sistema requerido por los servicios JSON del Catastro.
+*   Envía las coordenadas UTM al proxy en Vercel.
+*   El proxy consulta los servicios web JSON del Catastro (`Consulta_RCCOOR_Distancia` y `Consulta_DNPRC`) para obtener información asociada a esas coordenadas.
+*   Implementa una búsqueda por anillos crecientes si la consulta inicial no devuelve resultados inmediatos.
+*   Muestra la referencia catastral, dirección (LDT y detallada), distancia, uso principal y superficie de la finca más cercana si está disponible.
+*   Manejo de errores de geolocalización, del proxy y del servicio del Catastro, con mensajes informativos para el usuario.
 *   Interfaz responsiva y moderna construida con React, TypeScript y Tailwind CSS.
 
 ## Arquitectura
 
 *   **Frontend:** Aplicación React (Vite + TypeScript + Tailwind CSS).
-*   **Backend (Proxy):** Una función serverless de Vercel (Node.js/TypeScript) ubicada en el directorio `/api`. Esta función recibe las solicitudes del frontend, llama al servicio SOAP del Catastro y devuelve la respuesta. Esto evita problemas de CORS que ocurrirían con llamadas directas desde el navegador.
+*   **Backend (Proxy):** Una función serverless de Vercel (Node.js/TypeScript) ubicada en el directorio `/api`. Esta función recibe las solicitudes del frontend, llama a los servicios JSON del Catastro y devuelve la respuesta. Esto evita problemas de CORS que ocurrirían con llamadas directas desde el navegador.
 
 ## Ejecutar Localmente con Vercel CLI
 
@@ -44,7 +46,7 @@ Esta aplicación te permite obtener información catastral básica (referencia y
 
 ## Archivos de Configuración Clave
 
-*   **`vite.config.ts`**: Configuración para Vite. La propiedad `base` podría necesitar ajuste dependiendo de la configuración de tu proyecto en Vercel.
+*   **`vite.config.ts`**: Configuración para Vite.
 *   **`api/catastro-proxy.ts`**: La función serverless que actúa como proxy.
 *   **`tailwind.config.js`**: Configuración de Tailwind CSS.
 *   **`postcss.config.js`**: Configuración de PostCSS.
@@ -62,8 +64,6 @@ Esta aplicación te permite obtener información catastral básica (referencia y
     *   Install Command: `npm install` (o `yarn install`)
     *   Las funciones en el directorio `/api` serán desplegadas automáticamente.
 
-3.  **Haz push de tus cambios a la rama conectada con Vercel (ej. `main`).** Vercel construirá y desplegará tu aplicación y el proxy.
-
 **Importante sobre el Servicio del Catastro:**
-*   La aplicación utiliza coordenadas UTM de **ejemplo**. La transformación de Latitud/Longitud (obtenidas del navegador) a UTM EPSG:25830 (requeridas por el servicio SOAP) aún es una tarea pendiente.
 *   El servicio del Catastro puede tener sus propios límites de tasa o tiempos de inactividad.
+*   Esta aplicación es un uso no oficial y no está afiliado directamente al Catastro. La disponibilidad y precisión de los datos dependen exclusivamente de los servicios públicos proporcionados por la Dirección General del Catastro.
