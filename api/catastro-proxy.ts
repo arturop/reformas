@@ -21,10 +21,10 @@ async function fetchParcelDetailsAndRespond(
   contextMessage?: string // Optional message (e.g., from ring search)
 ): Promise<void> {
   const detalleUrl = new URL(
-    `https://ovc.catastro.hacienda.gob.es/OVCServWeb/` +
+    `https://ovc.catastro.meh.es/OVCServWeb/` + // Corrected domain
     `OVCWcfCallejero/COVCCallejero.svc/json/Consulta_DNPRC`
   );
-  detalleUrl.searchParams.append('RC', refCat);
+  detalleUrl.searchParams.append('RefCat', refCat); // Corrected parameter name
 
   console.log(`>>> CAT DETAILS URL: ${detalleUrl.toString()}`);
 
@@ -66,17 +66,31 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
 
-    const direccionCompletaArr = [];
-    if (detResult?.dt?.loc?.dir?.tv) direccionCompletaArr.push(detResult.dt.loc.dir.tv);
-    if (detResult?.dt?.loc?.dir?.nv) direccionCompletaArr.push(detResult.dt.loc.dir.nv);
-    if (detResult?.dt?.loc?.dir?.pnp) direccionCompletaArr.push(`Nº ${detResult.dt.loc.dir.pnp}`);
-    if (detResult?.dt?.loc?.dir?.kilometro) direccionCompletaArr.push(`Km ${detResult.dt.loc.dir.kilometro}`);
-
-
-    const direccionCompleta = direccionCompletaArr.length > 0 ? direccionCompletaArr.join(' ') : direccionLDT;
+    // Corrected parsing for direccionCompleta, usoPrincipal, superficie
+    let direccionCompleta = direccionLDT; // Fallback to LDT
+    if (detResult?.dt?.loc?.dir) {
+        const dir = detResult.dt.loc.dir;
+        const parts = [
+            dir.tv, // Tipo de vía
+            dir.nv, // Nombre de la vía
+            dir.pnp ? `Nº ${dir.pnp}` : null, // Número de portal principal
+            dir.snp ? `Nº ${dir.snp}` : null, // Número de portal secundario (if any)
+            dir.bloque, // Bloque
+            dir.escalera, // Escalera
+            dir.planta, // Planta
+            dir.puerta, // Puerta
+            dir.dp ? `${dir.dp} ` : null, // Código Postal
+            dir.nm ? dir.nm : null, // Nombre del Municipio
+            dir.np ? `(${dir.np})` : null // Nombre de la Provincia
+        ].filter(Boolean).join(' ').trim();
+        if (parts) direccionCompleta = parts;
+    }
     
-    const usoPrincipal = detResult?.bico?.[0]?.luso || detResult?.bico?.luso || null;
-    const superficie = detResult?.bico?.[0]?.sfc || detResult?.bico?.sfc || null;
+    const bico = detResult?.bico;
+    const bi = bico && Array.isArray(bico.bi) ? bico.bi[0] : (bico?.bi || null); // Handle bico.bi as potential array or object
+
+    const usoPrincipal = bi?.luso || null;
+    const superficie = bi?.sfc ? String(bi.sfc) : null;
 
     res.status(200).json({
       referenciaOriginal: refCat,
@@ -85,7 +99,7 @@ async function fetchParcelDetailsAndRespond(
       datosDetallados: {
         direccionCompleta: direccionCompleta,
         usoPrincipal: usoPrincipal,
-        superficie: superficie ? String(superficie) : null,
+        superficie: superficie,
       },
       message: finalMessage || undefined, // Only include message if it's not empty
     } as CatastroInfoDataForProxy);

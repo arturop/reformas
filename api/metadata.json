@@ -1,8 +1,0 @@
-{
-  "name": "GeoCatastro",
-  "description": "Una aplicación para obtener información catastral (referencia y dirección) de tu ubicación actual utilizando el servicio web del Catastro de España.",
-  "requestFramePermissions": [
-    "geolocation"
-  ],
-  "prompt": ""
-}
