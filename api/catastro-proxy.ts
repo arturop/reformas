@@ -18,7 +18,6 @@ export default async function handler(
     return;
   }
 
-  // Ajustado para coincidir con el ejemplo del servicio .asmx
   const soapRequestBody = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header/>
@@ -41,23 +40,41 @@ export default async function handler(
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        // Modificado según sugerencia: SOAPAction con el dominio ovc y https
-        'SOAPAction': '"https://ovc.catastro.meh.es/Consulta_CPMRC"'
+        // Reverted to WSDL-specified SOAPAction, ensuring it's quoted for the HTTP header
+        'SOAPAction': '"http://catastro.meh.es/Consulta_CPMRC"'
       },
       body: soapRequestBody,
     });
 
     const responseText = await catastroResponse.text();
 
-    // Forward Catastro's status code and content type
     res.setHeader('Content-Type', catastroResponse.headers.get('Content-Type') || 'text/xml;charset=UTF-8');
     res.status(catastroResponse.status).send(responseText);
 
   } catch (error: any) {
     console.error("Proxy error connecting to Catastro API:", error);
+    
+    let details = error.message;
+    if (error.cause) {
+      const cause = error.cause as any; // Type assertion for easier access
+      let causeDetails = [];
+      if (cause.message) causeDetails.push(cause.message);
+      if (cause.code) causeDetails.push(`Code: ${cause.code}`);
+      if (cause.errno) causeDetails.push(`Errno: ${cause.errno}`);
+      if (cause.syscall) causeDetails.push(`Syscall: ${cause.syscall}`);
+      
+      if (causeDetails.length > 0) {
+        details += ` (Cause: ${causeDetails.join('; ')})`;
+      } else if (typeof cause === 'object' && cause !== null) {
+        details += ` (Cause: ${JSON.stringify(cause)})`;
+      } else {
+        details += ` (Cause: ${String(cause)})`;
+      }
+    }
+
     res.status(500).json({ 
         error: 'Internal Server Error in proxy while contacting Catastro API.', 
-        details: error.message 
+        details: details 
     });
   }
 }
