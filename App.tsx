@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 
 const App: React.FC = () => {
@@ -70,7 +71,8 @@ const App: React.FC = () => {
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(responseText, "application/xml");
       
-      const faultStringNode = xmlDoc.querySelector("faultstring, Fault > Reason > Text");
+      const faultStringNode = xmlDoc.querySelector("faultstring, Fault > Reason > Text, :scope > faultstring, :scope > Fault > Reason > Text, soap\\:Fault > faultstring, soap\\:Fault > soap\\:Reason > soap\\:Text");
+
       if (faultStringNode) {
         const errorDesc = faultStringNode.textContent;
         console.warn("Error SOAP desde la API del Catastro (via proxy):", errorDesc);
@@ -79,10 +81,10 @@ const App: React.FC = () => {
         return;
       }
       
-      const resultNode = xmlDoc.querySelector("Consulta_CPMRCResult"); 
+      const resultNode = xmlDoc.querySelector("Consulta_RCCOORResult"); // Updated to target Consulta_RCCOORResult
 
       if (!resultNode) {
-        setCatastroError("No se pudo encontrar 'Consulta_CPMRCResult' en la respuesta XML. La estructura puede haber cambiado.");
+        setCatastroError("No se pudo encontrar 'Consulta_RCCOORResult' en la respuesta XML. La estructura puede haber cambiado o la operación falló sin un SOAP fault claro."); // Updated error message
         console.log("Respuesta XML completa (para depuración de estructura):", responseText);
         setIsFetchingCatastroInfo(false);
         return;
@@ -103,7 +105,8 @@ const App: React.FC = () => {
       let referenciaCatastral: string | null = null;
       let direccion: string | null = null;
 
-      const coorNode = resultNode.querySelector("coor"); 
+      // The structure inside consulta_coordenadas (aliased as Consulta_RCCOORResult) is the same
+      const coorNode = resultNode.querySelector("coordenadas > coord"); // Adjusted path to coor based on consulta_coordenadas structure
       if (coorNode) {
         const pc1Node = coorNode.querySelector("pc > pc1");
         const pc2Node = coorNode.querySelector("pc > pc2");
@@ -111,38 +114,45 @@ const App: React.FC = () => {
             referenciaCatastral = `${pc1Node.textContent}${pc2Node.textContent}`;
         }
 
-        const dtNode = coorNode.querySelector("dt"); 
-        if (dtNode) {
-            const tv = dtNode.querySelector("tv")?.textContent || ""; 
-            const nv = dtNode.querySelector("nv")?.textContent || ""; 
-            const pnp = dtNode.querySelector("pnp")?.textContent || ""; 
-            const snp = dtNode.querySelector("snp")?.textContent || ""; 
-            const km = dtNode.querySelector("km")?.textContent || ""; 
-            
-            const bq = dtNode.querySelector("bq")?.textContent || ""; 
-            const es = dtNode.querySelector("es")?.textContent || ""; 
-            const pt = dtNode.querySelector("pt")?.textContent || ""; 
-            const pu = dtNode.querySelector("pu")?.textContent || "";
+        const dtNode = coorNode.querySelector("ldt"); // dt is not directly under coor, ldt contains the address string
+        if (dtNode?.textContent) {
+            direccion = dtNode.textContent.trim(); // ldt often contains the full formatted address
+        } else {
+            // Fallback to individual components if ldt is not present or empty (less likely based on WSDL structure of ldt)
+            const ldtComponentsNode = coorNode.querySelector("dt");
+            if (ldtComponentsNode) {
+                const tv = ldtComponentsNode.querySelector("tv")?.textContent || ""; 
+                const nv = ldtComponentsNode.querySelector("nv")?.textContent || ""; 
+                const pnp = ldtComponentsNode.querySelector("pnp")?.textContent || ""; 
+                const snp = ldtComponentsNode.querySelector("snp")?.textContent || ""; 
+                const km = ldtComponentsNode.querySelector("km")?.textContent || ""; 
+                
+                const bq = ldtComponentsNode.querySelector("bq")?.textContent || ""; 
+                const es = ldtComponentsNode.querySelector("es")?.textContent || ""; 
+                const pt = ldtComponentsNode.querySelector("pt")?.textContent || ""; 
+                const pu = ldtComponentsNode.querySelector("pu")?.textContent || "";
 
-            const loc = dtNode.querySelector("loc")?.textContent || ""; 
-            const cp = dtNode.querySelector("cp")?.textContent || ""; 
+                const loc = ldtComponentsNode.querySelector("loc")?.textContent || ""; 
+                const cp = ldtComponentsNode.querySelector("cp")?.textContent || ""; 
 
-            let dirParts = [];
-            if (tv && nv) dirParts.push(`${tv} ${nv}`);
-            if (pnp) dirParts.push(`Nº ${pnp}${snp ? ' ' + snp : ''}`);
-            if (km) dirParts.push(`Km ${km}`);
-            if (bq) dirParts.push(`Bl. ${bq}`);
-            if (es) dirParts.push(`Esc. ${es}`);
-            if (pt) dirParts.push(`Pl. ${pt}`);
-            if (pu) dirParts.push(`Pta. ${pu}`);
-            if (cp && loc) dirParts.push(`${cp} ${loc}`);
-            else if (loc) dirParts.push(loc);
-            
-            if (dirParts.length > 0) {
-                direccion = dirParts.join(', ');
+                let dirParts = [];
+                if (tv && nv) dirParts.push(`${tv} ${nv}`);
+                if (pnp) dirParts.push(`Nº ${pnp}${snp ? ' ' + snp : ''}`);
+                if (km) dirParts.push(`Km ${km}`);
+                if (bq) dirParts.push(`Bl. ${bq}`);
+                if (es) dirParts.push(`Esc. ${es}`);
+                if (pt) dirParts.push(`Pl. ${pt}`);
+                if (pu) dirParts.push(`Pta. ${pu}`);
+                if (cp && loc) dirParts.push(`${cp} ${loc}`);
+                else if (loc) dirParts.push(loc);
+                
+                if (dirParts.length > 0) {
+                    direccion = dirParts.join(', ');
+                }
             }
         }
       }
+
 
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
@@ -374,3 +384,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
