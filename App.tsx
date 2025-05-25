@@ -1,19 +1,32 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import proj4 from 'proj4';
+import '../lib/projDefs'; // Ensure EPSG:23030 definition is loaded
 
-// Define EPSG:25830 (ETRS89 / UTM zone 30N) for Spain - Kept for reference if needed elsewhere, but not used for Catastro API now.
-proj4.defs(
-  'EPSG:25830',
-  '+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs +type=crs'
-);
+interface CatastroInfoData {
+  referenciaOriginal: string | null;
+  direccionOriginalLDT: string | null;
+  distancia: number | null;
+  datosDetallados: {
+    direccionCompleta: string | null;
+    usoPrincipal: string | null;
+    superficie: string | null;
+  } | null;
+  message?: string;
+}
 
-// Define EPSG:23030 (ED50 / UTM zone 30N) as required by the Catastro service
-proj4.defs(
-  'EPSG:23030',
-  '+proj=utm +zone=30 +ellps=intl +units=m +no_defs +towgs84=-87,-98,-121,0,0,0,0' // Used standard 7-param towgs84 for ED50
-);
-// EPSG:4326 (WGS84) is typically predefined in proj4
+// Types for proxy response
+type ProxyErrorResponse = { 
+  error: string; 
+  details?: string; 
+  // Include fields from CatastroInfoData if proxy might return partial data on error
+  referenciaOriginal?: string | null;
+  direccionOriginalLDT?: string | null;
+  distancia?: number | null;
+  message?: string;
+};
+type ProxySuccessResponse = CatastroInfoData;
+type ProxyResponse = ProxyErrorResponse | ProxySuccessResponse;
 
 
 const App: React.FC = () => {
@@ -22,7 +35,7 @@ const App: React.FC = () => {
   const [isLoadingLocation, setIsLoadingLocation] = useState<boolean>(false);
   const [isNonSecureContext, setIsNonSecureContext] = useState<boolean>(false);
 
-  const [catastroInfo, setCatastroInfo] = useState<{ referencia: string | null; direccion: string | null } | null>(null);
+  const [catastroInfo, setCatastroInfo] = useState<CatastroInfoData | null>(null);
   const [catastroError, setCatastroError] = useState<string | null>(null);
   const [isFetchingCatastroInfo, setIsFetchingCatastroInfo] = useState<boolean>(false);
   const [showApiWarning, setShowApiWarning] = useState<boolean>(true);
@@ -35,34 +48,24 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const fetchCatastroInfo = useCallback(async (geoCoords: GeolocationCoordinates | null) => {
+  const fetchCatastroInfo = async (geoCoords: GeolocationCoordinates) => {
     setIsFetchingCatastroInfo(true);
     setCatastroInfo(null);
     setCatastroError(null);
-    setUtmCoordinatesForDisplay(null); 
-
-    if (!geoCoords) {
-        setCatastroError("No se proporcionaron coordenadas geográficas para la consulta.");
-        setIsFetchingCatastroInfo(false);
-        return;
-    }
+    setUtmCoordinatesForDisplay(null);
 
     let utmX: number;
     let utmY: number;
-    const srsForCatastro = "EPSG:23030"; // Use EPSG:23030 for Catastro
+    const srsForCatastro = "EPSG:23030";
     
     try {
-      // Convert WGS84 (EPSG:4326) to ED50 / UTM zone 30N (EPSG:23030)
-      const wgs84 = 'EPSG:4326'; // Source CRS from navigator.geolocation
-      const targetSrs = srsForCatastro; // Target CRS for Catastro
-
+      const wgs84 = 'EPSG:4326';
+      const targetSrs = srsForCatastro;
       const [lon, lat] = [geoCoords.longitude, geoCoords.latitude];
       const transformedCoords = proj4(wgs84, targetSrs, [lon, lat]);
       utmX = transformedCoords[0];
       utmY = transformedCoords[1];
-      
       setUtmCoordinatesForDisplay({ x: parseFloat(utmX.toFixed(2)), y: parseFloat(utmY.toFixed(2)), srs: targetSrs });
-
     } catch (projError: any) {
         console.error("Error en la transformación de coordenadas:", projError);
         setCatastroError(`Error al transformar coordenadas a ${srsForCatastro}: ${projError.message}`);
@@ -75,112 +78,37 @@ const App: React.FC = () => {
     try {
       const response = await fetch(proxyApiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ utmX, utmY, srs: srsForCatastro }),
       });
       
-      const jsonData = await response.json();
+      const jsonData = await response.json() as ProxyResponse;
 
-      if (!response.ok) {
-        const errorDetails = jsonData.details || jsonData.error || JSON.stringify(jsonData);
-        console.error("Error desde el proxy o Catastro (JSON):", response.status, errorDetails);
-        setCatastroError(`Error al contactar el servicio (status: ${response.status}). Detalles: ${errorDetails}. Endpoint: ${proxyApiUrl}`);
-        setIsFetchingCatastroInfo(false);
-        return;
-      }
-
-      const result = jsonData.Consulta_RCCOORResult;
-
-      if (!result) {
-        setCatastroError("No se encontró 'Consulta_RCCOORResult' en la respuesta JSON. La estructura puede haber cambiado.");
-        console.log("JSON completo (para depuración de estructura, no se encontró Consulta_RCCOORResult):", JSON.stringify(jsonData, null, 2));
-        setIsFetchingCatastroInfo(false);
-        return;
-      }
-      
-      const control = result.control;
-
-      // Log the full jsonData if errors are indicated by control.cuerr, for easier debugging of error structure
-      if (control && typeof control.cuerr === 'number' && control.cuerr > 0) {
-        console.log("Respuesta completa del Catastro (con control.cuerr > 0):", JSON.stringify(jsonData, null, 2));
-      }
-      
-      // Check if control exists and cuerr is a number indicating one or more errors
-      if (control && typeof control.cuerr === 'number' && control.cuerr > 0) {
-        // Try to find the error container, checking for common variations like lerr or lErr
-        const errorContainer = result.lerr ?? result.lErr;
-
-        const errorsFromApi = errorContainer?.err
-          ? (Array.isArray(errorContainer.err) ? errorContainer.err : [errorContainer.err])
-          : [];
-
-        let finalErrorMessage: string;
-
-        if (errorsFromApi.length > 0) {
-          const firstApiError = errorsFromApi[0];
-          const errorCode = firstApiError?.cod; 
-          const errorDesc = firstApiError?.des;
-
-          const errorCodeToDisplay = (errorCode === null || errorCode === undefined)
-            ? "No especificado"
-            : String(errorCode);
-
-          const errorMsgToDisplay = (typeof errorDesc === 'string' && errorDesc.trim() !== '')
-            ? errorDesc.trim()
-            : "Sin descripción detallada por el Catastro.";
-
-          finalErrorMessage = `Catastro: ${errorMsgToDisplay} (Código: ${errorCodeToDisplay})`;
-          
-          console.warn(
-            "Error funcional Catastro (con detalles de errorContainer.err):",
-            `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
-            `Primer error interpretado: cod='${errorCodeToDisplay}', des='${errorMsgToDisplay}'.`,
-            "Error container:", errorContainer ? JSON.stringify(errorContainer, null, 2) : "No presente"
-          );
-
-        } else {
-          // Fallback if control.cuerr > 0 but no specific errors found in errorContainer.err
-          // Use the fallback suggested by the user.
-          finalErrorMessage = `Catastro: Error desconocido del Catastro (Código: ${control.cuerr})`;
-          console.warn(
-              "Error funcional Catastro (sin detalles en errorContainer.err o errorContainer no presente, usando fallback):",
-              `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
-              `control.des: '${control.des || 'No disponible'}'.`,
-              "Error container:", errorContainer ? JSON.stringify(errorContainer, null, 2) : "No presente",
-              "Mensaje generado:", finalErrorMessage
-          );
+      if (!response.ok || 'error' in jsonData) {
+        const errorResponse = jsonData as ProxyErrorResponse;
+        const errorDetails = errorResponse.details || errorResponse.error || JSON.stringify(jsonData);
+        console.error("Error desde el proxy o Catastro:", response.status, errorDetails, JSON.stringify(jsonData, null, 2));
+        setCatastroError(`Error del servicio: ${errorDetails}. (Status: ${response.status})`);
+        
+        // Handle partial data if proxy returns it on error
+        if (errorResponse.referenciaOriginal) {
+            setCatastroInfo({
+                referenciaOriginal: errorResponse.referenciaOriginal,
+                direccionOriginalLDT: errorResponse.direccionOriginalLDT || null,
+                distancia: errorResponse.distancia || null,
+                datosDetallados: null,
+                message: errorResponse.message || "No se pudieron obtener todos los detalles.",
+            });
         }
-        setCatastroError(finalErrorMessage);
-        setIsFetchingCatastroInfo(false);
-        return;
-      }
-      
-      // If control.cuerr is 0 or not present, proceed to parse data
-      let referenciaCatastral: string | null = null;
-      let direccion: string | null = null;
-      const coordData = result.coordenadas?.coord;
-      
-      if (coordData) {
-        const actualCoord = Array.isArray(coordData) ? coordData[0] : coordData;
-        if (actualCoord?.pc?.pc1 && actualCoord?.pc?.pc2) {
-            referenciaCatastral = `${actualCoord.pc.pc1}${actualCoord.pc.pc2}`;
-        }
-        if (actualCoord?.ldt) { 
-            direccion = actualCoord.ldt.trim();
-        }
-      }
-
-      if (referenciaCatastral || direccion) {
-        setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-        setCatastroError("No se encontró información catastral específica (referencia o dirección) para la ubicación, aunque la consulta al Catastro fue exitosa (sin errores funcionales).");
-        console.log("Respuesta del Catastro (sin errores funcionales, pero sin datos específicos):", JSON.stringify(jsonData, null, 2));
+         // jsonData is ProxySuccessResponse (CatastroInfoData)
+        setCatastroInfo(jsonData as ProxySuccessResponse);
+        if (jsonData.message) { 
+            console.info("Mensaje del proxy Catastro:", jsonData.message);
+        }
       }
-
     } catch (e: any) {
-      console.error("Error al procesar la solicitud al proxy del Catastro (JSON):", e);
+      console.error("Error al procesar la solicitud al proxy del Catastro:", e);
       if (e instanceof SyntaxError && e.message.toLowerCase().includes('json')) {
         setCatastroError(`Error: La respuesta del proxy no fue JSON válido. ${e.message}`);
       } else {
@@ -189,7 +117,14 @@ const App: React.FC = () => {
     } finally {
       setIsFetchingCatastroInfo(false);
     }
-  }, []); 
+  };
+
+  // useEffect to fetch Catastro info when coordinates are available
+  useEffect(() => {
+    if (coordinates) {
+      fetchCatastroInfo(coordinates);
+    }
+  }, [coordinates]); // Re-run when coordinates change
 
   const handleGetLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -200,16 +135,15 @@ const App: React.FC = () => {
 
     setIsLoadingLocation(true);
     setLocationError(null);
-    setCoordinates(null);
+    setCoordinates(null); // Clear previous coordinates
     setCatastroInfo(null);
     setCatastroError(null);
     setUtmCoordinatesForDisplay(null);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setCoordinates(position.coords);
+        setCoordinates(position.coords); // Set coordinates, which will trigger the useEffect
         setIsLoadingLocation(false);
-        fetchCatastroInfo(position.coords); 
       },
       (err) => {
         let errorMessage = "Ocurrió un error al obtener la ubicación.";
@@ -227,13 +161,114 @@ const App: React.FC = () => {
         setLocationError(errorMessage);
         setIsLoadingLocation(false);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-  }, [fetchCatastroInfo]);
+  }, []); // No dependencies needed for handleGetLocation itself now
+
+
+  // Determine button text and state
+  let buttonText = 'Obtener Ubicación y Datos Catastrales';
+  let isButtonBusy = isLoadingLocation || isFetchingCatastroInfo;
+  if (isLoadingLocation) {
+    buttonText = 'Obteniendo Ubicación...';
+  } else if (isFetchingCatastroInfo) {
+    buttonText = 'Consultando Catastro...';
+  }
+
+  const renderCatastroData = () => {
+    if (!catastroInfo) return null;
+    return (
+      <div className="space-y-4" role="region" aria-labelledby="catastro-data-heading">
+        <h3 id="catastro-data-heading" className="sr-only">Información Catastral Detallada</h3>
+        <div className="p-4 bg-white rounded-lg shadow-lg">
+          <h4 className="text-lg font-semibold text-slate-700 mb-2">Finca Más Cercana</h4>
+          {catastroInfo.referenciaOriginal && <p className="text-sm text-slate-600"><strong>Ref. Catastral:</strong> {catastroInfo.referenciaOriginal}</p>}
+          {catastroInfo.direccionOriginalLDT && <p className="text-sm text-slate-600"><strong>Localización (LDT):</strong> {catastroInfo.direccionOriginalLDT}</p>}
+          {catastroInfo.distancia !== null && typeof catastroInfo.distancia === 'number' && (
+            <p className="text-sm text-slate-600"><strong>Distancia Aprox.:</strong> {catastroInfo.distancia.toFixed(2)} metros</p>
+          )}
+        </div>
+
+        {catastroInfo.datosDetallados && (
+          <div className="p-4 bg-white rounded-lg shadow-lg">
+            <h4 className="text-lg font-semibold text-slate-700 mb-2">Detalles de la Finca</h4>
+            {catastroInfo.datosDetallados.direccionCompleta && <p className="text-sm text-slate-600"><strong>Dirección Completa:</strong> {catastroInfo.datosDetallados.direccionCompleta}</p>}
+            {catastroInfo.datosDetallados.usoPrincipal && <p className="text-sm text-slate-600"><strong>Uso Principal:</strong> {catastroInfo.datosDetallados.usoPrincipal}</p>}
+            {catastroInfo.datosDetallados.superficie && <p className="text-sm text-slate-600"><strong>Superficie:</strong> {catastroInfo.datosDetallados.superficie}</p>}
+          </div>
+        )}
+        {catastroInfo.message && (!catastroInfo.datosDetallados || Object.values(catastroInfo.datosDetallados).every(v => v === null || v === 'N/A' || v === '')) && (
+             <div className="p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
+                <p className="font-bold">Nota Adicional</p>
+                <p>{catastroInfo.message}</p>
+             </div>
+        )}
+      </div>
+    );
+  };
+  
+  const renderCoordinatesData = () => {
+    if (!coordinates && !utmCoordinatesForDisplay) return null;
+    return (
+      <div className="space-y-4 mt-4" role="region" aria-labelledby="coordinates-data-heading">
+         <h3 id="coordinates-data-heading" className="sr-only">Datos de Coordenadas</h3>
+        {coordinates && !locationError && (
+          <div className="p-4 bg-white rounded-lg shadow-lg">
+            <h4 className="text-lg font-semibold text-slate-700 mb-2">Coordenadas Geográficas (WGS84)</h4>
+            <p className="text-sm text-slate-600"><strong>Latitud:</strong> {coordinates.latitude.toFixed(6)}</p>
+            <p className="text-sm text-slate-600"><strong>Longitud:</strong> {coordinates.longitude.toFixed(6)}</p>
+            {coordinates.accuracy && <p className="text-sm text-slate-600"><strong>Precisión:</strong> {coordinates.accuracy.toFixed(1)} metros</p>}
+          </div>
+        )}
+        {utmCoordinatesForDisplay && (
+            <div className="p-4 bg-white rounded-lg shadow-lg">
+                <h4 className="text-lg font-semibold text-slate-700 mb-2">Coordenadas UTM ({utmCoordinatesForDisplay.srs})</h4>
+                <p className="text-sm text-slate-600"><strong>X:</strong> {utmCoordinatesForDisplay.x.toLocaleString()}</p>
+                <p className="text-sm text-slate-600"><strong>Y:</strong> {utmCoordinatesForDisplay.y.toLocaleString()}</p>
+            </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderAlerts = () => {
+    if (locationError) {
+      return (
+        <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
+          <p className="font-bold">Error de Geolocalización</p>
+          <p>{locationError}</p>
+        </div>
+      );
+    }
+    if (catastroError) {
+      return (
+        <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
+          <p className="font-bold">Error de Información Catastral</p>
+          <p>{catastroError}</p>
+          {/* Render partial Catastro info if available even with error */}
+          {catastroInfo && catastroInfo.referenciaOriginal && renderCatastroData()}
+        </div>
+      );
+    }
+     // Fallback message if no specific data was found after a successful-looking flow but catastroInfo is empty or only contains a message
+    if (coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError) {
+        if (!catastroInfo) { // If catastroInfo is null after fetch
+            return (
+                <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
+                    <p>No se pudo obtener información catastral para la ubicación. El servicio del Catastro no devolvió datos o hubo un problema en la comunicación.</p>
+                </div>
+            );
+        } else if (catastroInfo && !catastroInfo.referenciaOriginal && !catastroInfo.datosDetallados && catastroInfo.message) {
+             // Specific message if catastroInfo is present but essentially empty (only message)
+             return (
+                 <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
+                     <p>{catastroInfo.message}</p>
+                 </div>
+             );
+        }
+    }
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-600 to-indigo-700 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans antialiased">
@@ -246,7 +281,7 @@ const App: React.FC = () => {
         {isNonSecureContext && (
           <div className="mb-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 rounded" role="alert">
             <p className="font-bold">Atención: Contexto no seguro</p>
-            <p className="text-sm">La geolocalización podría no funcionar correctamente o estar desactivada. Para una funcionalidad completa, accede a esta aplicación a través de HTTPS.</p>
+            <p className="text-sm">La geolocalización podría no funcionar correctamente. Accede via HTTPS.</p>
           </div>
         )}
 
@@ -267,60 +302,24 @@ const App: React.FC = () => {
         <div className="mb-6">
           <button
             onClick={handleGetLocation}
-            disabled={isLoadingLocation || isFetchingCatastroInfo}
+            disabled={isButtonBusy}
             className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-live="polite"
-            aria-busy={isLoadingLocation || isFetchingCatastroInfo}
+            aria-busy={isButtonBusy}
           >
-            {isLoadingLocation ? 'Obteniendo Ubicación...' : isFetchingCatastroInfo ? 'Consultando Catastro...' : 'Obtener Ubicación y Datos Catastrales'}
+            {/* Spinner can be added here if desired, e.g. an SVG */}
+            {isButtonBusy && <span className="inline-block animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></span>}
+            {buttonText}
           </button>
         </div>
-
-        {locationError && (
-          <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
-            <p className="font-bold">Error de Geolocalización</p>
-            <p>{locationError}</p>
-          </div>
-        )}
-
-        {catastroError && (
-          <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
-            <p className="font-bold">Error de Información Catastral</p>
-            <p>{catastroError}</p>
-          </div>
-        )}
-
-        {coordinates && !locationError && (
-          <div className="mb-4 p-4 bg-white rounded-lg shadow-lg">
-            <h3 className="text-lg font-semibold text-slate-700 mb-2">Coordenadas Geográficas (WGS84)</h3>
-            <p className="text-sm text-slate-600"><strong>Latitud:</strong> {coordinates.latitude.toFixed(6)}</p>
-            <p className="text-sm text-slate-600"><strong>Longitud:</strong> {coordinates.longitude.toFixed(6)}</p>
-            {coordinates.accuracy && <p className="text-sm text-slate-600"><strong>Precisión:</strong> {coordinates.accuracy.toFixed(1)} metros</p>}
-          </div>
-        )}
-
-        {utmCoordinatesForDisplay && !catastroError && (
-            <div className="mb-4 p-4 bg-white rounded-lg shadow-lg">
-                <h3 className="text-lg font-semibold text-slate-700 mb-2">Coordenadas UTM ({utmCoordinatesForDisplay.srs})</h3>
-                <p className="text-sm text-slate-600"><strong>X:</strong> {utmCoordinatesForDisplay.x.toLocaleString()}</p>
-                <p className="text-sm text-slate-600"><strong>Y:</strong> {utmCoordinatesForDisplay.y.toLocaleString()}</p>
-            </div>
-        )}
         
-        {catastroInfo && (catastroInfo.referencia || catastroInfo.direccion) && !catastroError && (
-          <div className="p-4 bg-white rounded-lg shadow-lg">
-            <h3 className="text-lg font-semibold text-slate-700 mb-2">Información Catastral</h3>
-            {catastroInfo.referencia && <p className="text-sm text-slate-600"><strong>Referencia Catastral:</strong> {catastroInfo.referencia}</p>}
-            {catastroInfo.direccion && <p className="text-sm text-slate-600"><strong>Dirección:</strong> {catastroInfo.direccion}</p>}
-          </div>
-        )}
+        {renderAlerts()}
+
+        {/* Display Catastro Info if available and no catastroError (or if partial info is shown with error) */}
+        {catastroInfo && (!catastroError || (catastroError && catastroInfo.referenciaOriginal)) && renderCatastroData()}
         
-        {coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError && 
-         (!catastroInfo || (!catastroInfo.referencia && !catastroInfo.direccion)) && (
-          <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
-            <p>No se encontró información catastral específica (referencia o dirección) para la ubicación, aunque la consulta al Catastro se realizó sin errores funcionales directos.</p>
-          </div>
-        )}
+        {/* Display Coordinates Info if available and no locationError */}
+        {(coordinates || utmCoordinatesForDisplay) && !locationError && renderCoordinatesData()}
 
       </div> 
     </div> 
@@ -328,4 +327,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-
