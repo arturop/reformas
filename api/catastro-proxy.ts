@@ -155,13 +155,13 @@ async function buscarPorAnillos(
           const coorddRing = result.coordenadas_distancias.coordd;
           const firstParcelContainerRing = Array.isArray(coorddRing) ? coorddRing[0] : coorddRing;
 
-          if (firstParcelContainerRing?.lpcd?.pcd) {
-            const pcdListRing = firstParcelContainerRing.lpcd.pcd;
+          if (firstParcelContainerRing?.lpcd?.pcd) { // Corrected: check for pcd within lpcd
+            const pcdListRing = firstParcelContainerRing.lpcd.pcd; // pcd is the array or object here
             const pcdRing = Array.isArray(pcdListRing) ? pcdListRing[0] : pcdListRing;
 
             if (pcdRing?.pc?.pc1 && pcdRing?.pc?.pc2) {
               const refCatFromRing = `${pcdRing.pc.pc1}${pcdRing.pc.pc2}`;
-              const distanciaFromRing = pcdRing.dis;
+              const distanciaFromRing = pcdRing.dis ? Number(pcdRing.dis) : null; // Ensure distance is a number
               const direccionLDTFromRing = pcdRing.ldt;
               
               console.log(`Ring search: ÉXITO! Encontrada parcela ${refCatFromRing} en radio ${r}m.`);
@@ -268,8 +268,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const coordd = distResult.coordenadas_distancias.coordd;
     const firstParcelContainer = Array.isArray(coordd) ? coordd[0] : coordd;
 
-    if (!firstParcelContainer?.lpcd?.pcd) {
-        console.warn("No 'pcd' (parcel data) found in Consulta_RCCOOR_Distancia (initial, 200 OK):", JSON.stringify(distJson, null, 2));
+    // Corrected parsing: lpcd is the array of parcels (or single object)
+    // and pcd is not a direct child of lpcd, rather lpcd *is* the parcel array/object.
+    // The actual parcel data (pc, ldt, dis) is directly on elements of lpcd.
+    if (!firstParcelContainer?.lpcd?.pcd) { // Check for pcd inside lpcd
+        console.warn("No 'pcd' (parcel data array/object) found in firstParcelContainer.lpcd (initial, 200 OK):", JSON.stringify(distJson, null, 2));
         res.status(200).json({
             referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
             message: "El servicio del Catastro respondió, pero no se encontraron datos de parcelas específicas (PCD) en la respuesta inicial."
@@ -277,15 +280,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
     
-    const pcdList = firstParcelContainer.lpcd.pcd;
-    const pcd = Array.isArray(pcdList) ? pcdList[0] : pcdList;
+    const pcdList = firstParcelContainer.lpcd.pcd; // pcd is the array or object of parcels
+    const pcd = Array.isArray(pcdList) ? pcdList[0] : pcdList; // Get the first parcel
 
     if (!pcd?.pc?.pc1 || !pcd?.pc?.pc2) {
         console.warn("Parcela más cercana (inicial) no contiene referencia catastral completa (pc1, pc2):", JSON.stringify(pcd, null, 2));
         res.status(200).json({
             referenciaOriginal: null,
             direccionOriginalLDT: pcd?.ldt || null,
-            distancia: pcd?.dis || null,
+            distancia: pcd?.dis ? Number(pcd.dis) : null, // Ensure distance is a number
             datosDetallados: null,
             message: 'La parcela más cercana encontrada (inicial) no contiene una referencia catastral completa.'
         } as CatastroInfoDataForProxy);
@@ -293,7 +296,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const refCat = `${pcd.pc.pc1}${pcd.pc.pc2}`;
-    const distancia = pcd.dis;
+    const distancia = pcd.dis ? Number(pcd.dis) : null; // Ensure distance is a number
     const direccionLDT = pcd.ldt;
 
     console.log(`Parcela ${refCat} encontrada en la búsqueda inicial. Obteniendo detalles...`);
