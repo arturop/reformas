@@ -30,7 +30,7 @@ const App: React.FC = () => {
     setCatastroError(null);
 
     // URL del servicio de Catastro (HTTPS)
-    const catastroApiUrl = `https://ovc.catastro.mineco.es/ovcservweb/OVCServWeb.asmx/Consulta_DNPLOC_Pol?SRS=EPSG:4326&Coordenada_X=${coords.longitude}&Coordenada_Y=${coords.latitude}`;
+    const catastroApiUrl = `https://ovc.catastro.meh.es/ovcservweb/OVCServWeb.asmx/Consulta_DNPLOC_Pol?SRS=EPSG:4326&Coordenada_X=${coords.longitude}&Coordenada_Y=${coords.latitude}`;
     
     try {
       const response = await fetch(catastroApiUrl); 
