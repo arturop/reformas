@@ -1,5 +1,16 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
+import proj4 from 'proj4';
+
+// Define EPSG:25830 (ETRS89 / UTM zone 30N) for Spain
+// You can find proj4 definitions from https://epsg.io/
+proj4.defs(
+  'EPSG:25830',
+  '+proj=utm +zone=30 +ellps=GRS80 +units=m +no_defs +type=crs'
+);
+// EPSG:4326 (WGS84) is typically predefined in proj4, but can be defined if needed:
+// proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs +type=crs');
+
 
 const App: React.FC = () => {
   const [coordinates, setCoordinates] = useState<GeolocationCoordinates | null>(null);
@@ -26,16 +37,35 @@ const App: React.FC = () => {
     setCatastroError(null);
     setUtmCoordinatesForDisplay(null); 
 
+    if (!geoCoords) {
+        setCatastroError("No se proporcionaron coordenadas geográficas para la consulta.");
+        setIsFetchingCatastroInfo(false);
+        return;
+    }
+
     let utmX: number;
     let utmY: number;
-    const srs = "EPSG:25830"; // Example SRS, should match what the API expects if not transformed
+    const srs = "EPSG:25830"; 
     
-    // Using example UTM coordinates as transformation from WGS84 is not implemented
-    utmX = 123456; 
-    utmY = 4567890; 
-    setUtmCoordinatesForDisplay({ x: utmX, y: utmY, srs: srs });
-    console.warn(`ADVERTENCIA: Usando coordenadas UTM de ejemplo (X: ${utmX}, Y: ${utmY}, SRS: ${srs}). La transformación de coordenadas WGS84 a UTM EPSG:25830 no está implementada.`);
-    
+    try {
+      // Convert WGS84 (EPSG:4326) to UTM EPSG:25830
+      const wgs84 = 'EPSG:4326'; // Source CRS from navigator.geolocation
+      const targetSrs = 'EPSG:25830'; // Target CRS for Catastro
+
+      const [lon, lat] = [geoCoords.longitude, geoCoords.latitude];
+      const transformedCoords = proj4(wgs84, targetSrs, [lon, lat]);
+      utmX = transformedCoords[0];
+      utmY = transformedCoords[1];
+      
+      setUtmCoordinatesForDisplay({ x: parseFloat(utmX.toFixed(2)), y: parseFloat(utmY.toFixed(2)), srs: targetSrs });
+
+    } catch (projError: any) {
+        console.error("Error en la transformación de coordenadas:", projError);
+        setCatastroError(`Error al transformar coordenadas: ${projError.message}`);
+        setIsFetchingCatastroInfo(false);
+        return;
+    }
+        
     const proxyApiUrl = `/api/catastro-proxy`;
     
     try {
@@ -44,14 +74,12 @@ const App: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ utmX, utmY, srs }),
+        body: JSON.stringify({ utmX, utmY, srs }), // Send real transformed UTM
       });
       
-      // Expecting JSON response from our proxy (which gets JSON from WCF service)
       const jsonData = await response.json();
 
       if (!response.ok) {
-        // Error details should be in jsonData.details or jsonData.error from our proxy
         const errorDetails = jsonData.details || jsonData.error || JSON.stringify(jsonData);
         console.error("Error desde el proxy o Catastro (JSON):", response.status, errorDetails);
         setCatastroError(`Error al contactar el servicio (status: ${response.status}). Detalles: ${errorDetails}. Endpoint: ${proxyApiUrl}`);
@@ -59,7 +87,6 @@ const App: React.FC = () => {
         return;
       }
 
-      // Process the JSON data
       const result = jsonData.Consulta_RCCOORResult;
 
       if (!result) {
@@ -69,17 +96,16 @@ const App: React.FC = () => {
         return;
       }
       
-      // Check for functional errors from Catastro within the JSON structure
-      // Example: result.control.cuerr should be 0 for success
-      // The exact structure for cuerr and des might be nested, e.g., result.control.cuerr or result.control.lerr.err[0].des
-      // Based on the example `{"control": { "cucoor": 1, "cuerr": 0 }}`
       const control = result.control;
       if (control && typeof control.cuerr === 'number' && control.cuerr !== 0) {
-        // Attempt to find a descriptive error message
         let errorDesc = "Error desconocido del Catastro";
-        if (result.lerr && Array.isArray(result.lerr.err) && result.lerr.err.length > 0 && result.lerr.err[0].des) {
-            errorDesc = result.lerr.err[0].des;
-        } else if (control.des) { // Some services might put 'des' directly in control
+        // Attempt to log the entire result.lerr if it exists, for more detailed error info
+        if (result.lerr) {
+            console.warn("Detalle de error funcional del Catastro (lerr):", JSON.stringify(result.lerr, null, 2));
+            if (Array.isArray(result.lerr.err) && result.lerr.err.length > 0 && result.lerr.err[0].des) {
+                errorDesc = result.lerr.err[0].des;
+            }
+        } else if (control.des) { 
             errorDesc = control.des;
         }
         console.warn("Error funcional desde la API del Catastro (JSON):", control.cuerr, errorDesc);
@@ -90,31 +116,21 @@ const App: React.FC = () => {
       
       let referenciaCatastral: string | null = null;
       let direccion: string | null = null;
-
-      // Extract data from the 'coordenadas' object
-      // The WCF JSON example shows `{"coordenadas": { /* ... */ }}`
-      // And inside that, `coord` could be an object or an array if multiple results are possible
       const coordData = result.coordenadas?.coord;
       
       if (coordData) {
-        // If coordData is an array, take the first element, otherwise use it directly
         const actualCoord = Array.isArray(coordData) ? coordData[0] : coordData;
-
         if (actualCoord?.pc?.pc1 && actualCoord?.pc?.pc2) {
             referenciaCatastral = `${actualCoord.pc.pc1}${actualCoord.pc.pc2}`;
         }
-
-        if (actualCoord?.ldt) { // ldt usually contains the full formatted address
+        if (actualCoord?.ldt) { 
             direccion = actualCoord.ldt.trim();
         }
-        // Add more specific address component extraction if needed from actualCoord.dt or similar,
-        // if ldt is not sufficient or always present.
       }
 
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-         // Only set error if no functional error was already caught
         if (!(control && typeof control.cuerr === 'number' && control.cuerr !== 0)) {
             setCatastroError("No se encontró información catastral específica (referencia o dirección) en la respuesta JSON.");
             console.log("JSON del Catastro (vía proxy, para depuración):", JSON.stringify(jsonData, null, 2));
@@ -123,7 +139,6 @@ const App: React.FC = () => {
 
     } catch (e: any) {
       console.error("Error al procesar la solicitud al proxy del Catastro (JSON):", e);
-      // Check if 'e' is from response.json() failing due to non-JSON response
       if (e instanceof SyntaxError && e.message.toLowerCase().includes('json')) {
         setCatastroError(`Error: La respuesta del proxy no fue JSON válido. ${e.message}`);
       } else {
@@ -221,28 +236,18 @@ const App: React.FC = () => {
               </p>
               <ul className="list-disc list-inside mt-1 ml-8 text-sm sm:text-base">
                 <li><strong>Problemas de red o del servicio del Catastro:</strong> El servicio podría estar temporalmente inaccesible.</li>
-                <li><strong>Coordenadas:</strong> El servicio actual espera coordenadas UTM (EPSG:25830). La conversión desde Lat/Lon está pendiente (ver nota abajo).</li>
+                <li><strong>Coordenadas Inválidas:</strong> Si tu ubicación (o su transformación a UTM) no es válida para el Catastro Español.</li>
                 <li><strong>Errores del proxy:</strong> Si el proxy intermedio falla.</li>
               </ul>
             </div>
           )}
 
           {utmCoordinatesForDisplay && (
-            <div role="alert" className="bg-amber-600 bg-opacity-90 text-white p-4 rounded-md mb-6 shadow-lg text-left">
-              <div className="flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-                </svg>
-                <h3 className="font-semibold text-lg">Nota Importante (Coordenadas):</h3>
-              </div>
-              <p className="mt-1 ml-8 text-sm sm:text-base">
-                La consulta al Catastro utiliza <strong>coordenadas UTM de ejemplo</strong> (X: {utmCoordinatesForDisplay.x}, Y: {utmCoordinatesForDisplay.y}, SRS: {utmCoordinatesForDisplay.srs})
-                en lugar de tu ubicación real. La transformación de coordenadas geográficas (WGS84) a UTM (EPSG:25830) es un paso técnico pendiente.
-                Los resultados mostrados corresponden a estas coordenadas de prueba.
-              </p>
+            <div role="status" className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded relative mb-4 text-left" >
+              <strong className="font-bold">Coordenadas UTM (EPSG:25830) enviadas:</strong>
+              <span className="block sm:inline"> X: {utmCoordinatesForDisplay.x}, Y: {utmCoordinatesForDisplay.y}</span>
             </div>
           )}
-
 
           <button
             onClick={handleGetLocation}
@@ -340,7 +345,7 @@ const App: React.FC = () => {
       </div>
       <footer className="mt-8 text-center text-indigo-300 text-xs sm:text-sm">
         <p>&copy; {new Date().getFullYear()} Consulta Catastral Geo. Datos proporcionados por la Dirección General del Catastro.</p>
-        <p className="mt-1">Esta aplicación utiliza un proxy para acceder a los servicios del Catastro y aún enfrenta desafíos como la conversión de coordenadas (Lat/Lon a UTM).</p>
+        <p className="mt-1">Esta aplicación utiliza un proxy para acceder a los servicios del Catastro y ahora transforma coordenadas Lat/Lon a UTM.</p>
       </footer>
     </div>
   );
