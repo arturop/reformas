@@ -32,14 +32,15 @@ export default async function handler(
 </soap:Envelope>
   `.trim();
 
-  const catastroApiUrl = `https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCoordenadas.asmx`;
+  // Changed to the WCF service endpoint (.svc) from the WSDL
+  const catastroApiUrl = `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCoordenadas.svc/soap`;
 
   try {
     const catastroResponse = await fetch(catastroApiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        // Reverted to include explicit double quotes in the JS string for SOAPAction
+        // SOAPAction for Consulta_RCCOOR with explicit quotes
         'SOAPAction': '"http://www.catastro.meh.es/ICOVCCoordenadas/Consulta_RCCOOR"'
       },
       body: soapRequestBody,
