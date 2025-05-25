@@ -21,8 +21,8 @@ async function fetchParcelDetailsAndRespond(
   contextMessage?: string // Optional message (e.g., from ring search)
 ): Promise<void> {
   const detalleUrl = new URL(
-    `https://ovc.catastro.meh.es/OVCServWeb/` + // Corrected domain
-    `OVCWcfCallejero/COVCCallejero.svc/json/Consulta_DNPRC`
+    'https://ovc.catastro.meh.es/OVCServWeb/' + // Corrected domain
+    'OVCWcfCallejero/COVCCallejero.svc/json/Consulta_DNPRC'
   );
   detalleUrl.searchParams.append('RefCat', refCat); // Corrected parameter name
 
