@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import proj4 from 'proj4';
-import '../lib/projDefs'; // Ensure EPSG:23030 definition is loaded
+import '@/lib/projDefs'; // Ensure EPSG:23030 definition is loaded
 
 interface CatastroInfoData {
   referenciaOriginal: string | null;
@@ -327,3 +327,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
