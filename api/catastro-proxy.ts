@@ -39,8 +39,8 @@ export default async function handler(
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        // Corrected SOAPAction for Consulta_RCCOOR operation
-        'SOAPAction': '"http://www.catastro.meh.es/ICOVCCoordenadas/Consulta_RCCOOR"'
+        // Corrected SOAPAction for Consulta_RCCOOR operation, trying without explicit quotes in the JS string
+        'SOAPAction': 'http://www.catastro.meh.es/ICOVCCoordenadas/Consulta_RCCOOR'
       },
       body: soapRequestBody,
     });
