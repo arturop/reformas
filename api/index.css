@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos globales adicionales si son necesarios */
+body {
+  margin: 0;
+  /* font-family será aplicado por Tailwind desde la configuración */
+}
