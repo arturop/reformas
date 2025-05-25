@@ -103,41 +103,48 @@ const App: React.FC = () => {
       const control = result.control;
       // Check if control exists and cuerr is a number indicating one or more errors
       if (control && typeof control.cuerr === 'number' && control.cuerr > 0) {
-        // Correctly interpret Catastro errors as per user guidance:
-        // control.cuerr is the COUNT of errors.
-        // The actual error code/description are in result.lerr.err.
-
-        // 1) Agrupa errores en array
         const errorsFromLerr = result.lerr?.err
           ? (Array.isArray(result.lerr.err) ? result.lerr.err : [result.lerr.err])
           : [];
 
-        // 2) Saca el primero (si existe)
-        const firstApiError = errorsFromLerr[0]; // undefined if errorsFromLerr is empty
-        
-        // Use firstApiError.cod if available, otherwise NaN (as per user example).
-        const errorCodeToDisplay = firstApiError?.cod ?? NaN; 
-        
-        // Use firstApiError.des if available, otherwise a default message.
-        const errorMsgToDisplay  = (firstApiError && typeof firstApiError.des === 'string' && firstApiError.des.trim() !== '')
-                                   ? firstApiError.des.trim()
-                                   : "Error desconocido del Catastro";
-        
-        // 3) Muestra esa info al usuario
-        const finalErrorMessage = `Catastro: ${errorMsgToDisplay} (Código: ${errorCodeToDisplay})`;
-        
-        console.warn(
-            "Error funcional Catastro:",
-            `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
-            `Interpretado como: ${finalErrorMessage}`
-        );
-        if (result.lerr) {
-            console.warn("Detalle completo lerr:", JSON.stringify(result.lerr, null, 2));
-        } else {
-            // This case (cuerr > 0 but no lerr) should be rare if API behaves as per docs.
-            console.warn("Advertencia: control.cuerr > 0 pero lerr no estaba presente en la respuesta.");
-        }
+        let finalErrorMessage: string;
 
+        if (errorsFromLerr.length > 0) {
+          const firstApiError = errorsFromLerr[0];
+          const errorCode = firstApiError?.cod; 
+          const errorDesc = firstApiError?.des;
+
+          const errorCodeToDisplay = (errorCode === null || errorCode === undefined)
+            ? "No especificado"
+            : String(errorCode);
+
+          const errorMsgToDisplay = (typeof errorDesc === 'string' && errorDesc.trim() !== '')
+            ? errorDesc.trim()
+            : "Sin descripción detallada por el Catastro.";
+
+          finalErrorMessage = `Catastro: ${errorMsgToDisplay} (Código: ${errorCodeToDisplay})`;
+          
+          console.warn(
+            "Error funcional Catastro (con detalles de lerr.err):",
+            `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
+            `Primer error interpretado: cod='${errorCodeToDisplay}', des='${errorMsgToDisplay}'.`,
+            "Detalle completo lerr:", JSON.stringify(result.lerr, null, 2)
+          );
+
+        } else {
+          // control.cuerr > 0 but no errors found in lerr.err.
+          let baseMessage = `Catastro: El servicio reportó ${control.cuerr} error(es) sin detalles específicos.`;
+          if (control.des && typeof control.des === 'string' && control.des.trim() !== '') {
+            baseMessage += ` Descripción general del control: ${control.des.trim()}`;
+          }
+          finalErrorMessage = baseMessage;
+          console.warn(
+              "Error funcional Catastro (sin detalles en lerr.err):",
+              `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
+              `control.des: '${control.des || 'No disponible'}'.`,
+              "Respuesta completa lerr:", result.lerr ? JSON.stringify(result.lerr, null, 2) : "lerr no presente"
+          );
+        }
         setCatastroError(finalErrorMessage);
         setIsFetchingCatastroInfo(false);
         return;
@@ -161,9 +168,6 @@ const App: React.FC = () => {
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-        // No specific data found, but also no functional error reported by Catastro's control.cuerr
-        // This means the API call was successful (cuerr=0), but the specific parcel might not have data.
-        // This message will be shown in the red error box.
         setCatastroError("No se encontró información catastral específica (referencia o dirección) para la ubicación, aunque la consulta al Catastro fue exitosa (sin errores funcionales).");
         console.log("Respuesta del Catastro (sin errores funcionales, pero sin datos específicos):", JSON.stringify(jsonData, null, 2));
       }
@@ -178,7 +182,7 @@ const App: React.FC = () => {
     } finally {
       setIsFetchingCatastroInfo(false);
     }
-  }, []); // fetchCatastroInfo is stable, no external deps that change
+  }, []); 
 
   const handleGetLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -304,15 +308,6 @@ const App: React.FC = () => {
           </div>
         )}
         
-        {/* Message if no specific data found, but also no errors and location was obtained.
-            This amber box will show if:
-            - Location was obtained (coordinates exist, no locationError)
-            - No catastro API call is in progress (isLoadingLocation, isFetchingCatastroInfo are false)
-            - Crucially, no catastroError has been set (this means the API call was successful AND specific data was found OR the API call failed in a way not setting catastroError directly yet)
-            - And, catastroInfo is null or has no specific data.
-            Given the current logic where missing data after a "successful" API call (cuerr=0) *sets* catastroError,
-            this amber box condition might be difficult to reach. It's kept for completeness.
-        */}
         {coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError && 
          (!catastroInfo || (!catastroInfo.referencia && !catastroInfo.direccion)) && (
           <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
@@ -320,8 +315,8 @@ const App: React.FC = () => {
           </div>
         )}
 
-      </div> {/* Closing the card div */}
-    </div> /* Closing the main container div */
+      </div> 
+    </div> 
   );
 };
 
