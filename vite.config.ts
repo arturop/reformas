@@ -5,7 +5,7 @@ import path from 'path'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/reformas/', // Asegúrate de que 'reformas' es el nombre de tu repositorio o ajusta según sea necesario
+  base: '/', // Ajustado para despliegue en la raíz de Vercel
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'), // Permite importar desde la raíz del proyecto con @/
