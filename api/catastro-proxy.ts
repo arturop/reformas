@@ -18,19 +18,20 @@ export default async function handler(
     return;
   }
 
-  const soapRequestBody = `
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cat="http://catastro.meh.es/">
-   <soapenv:Header/>
-   <soapenv:Body>
-      <cat:Consulta_CPMRC>
-         <cat:Coord>
-            <cat:xc>${utmX}</cat:xc>
-            <cat:yc>${utmY}</cat:yc>
-            <cat:sr>${srs}</cat:sr>
-         </cat:Coord>
-      </cat:Consulta_CPMRC>
-   </soapenv:Body>
-</soapenv:Envelope>
+  // Ajustado para coincidir con el ejemplo del servicio .asmx
+  const soapRequestBody = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Header/>
+  <soap:Body>
+    <Consulta_CPMRC xmlns="http://catastro.meh.es/">
+      <Coord>
+        <xc>${utmX}</xc>
+        <yc>${utmY}</yc>
+        <sr>${srs}</sr>
+      </Coord>
+    </Consulta_CPMRC>
+  </soap:Body>
+</soap:Envelope>
   `.trim();
 
   const catastroApiUrl = `https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCoordenadas.asmx`;
@@ -40,7 +41,8 @@ export default async function handler(
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        'SOAPAction': '"http://catastro.meh.es/Consulta_CPMRC"' // Added double quotes
+        // Modificado según sugerencia: SOAPAction con el dominio ovc y https
+        'SOAPAction': '"https://ovc.catastro.meh.es/Consulta_CPMRC"'
       },
       body: soapRequestBody,
     });
