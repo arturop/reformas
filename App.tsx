@@ -95,22 +95,31 @@ const App: React.FC = () => {
 
       if (!result) {
         setCatastroError("No se encontró 'Consulta_RCCOORResult' en la respuesta JSON. La estructura puede haber cambiado.");
-        console.log("JSON completo (para depuración de estructura):", JSON.stringify(jsonData, null, 2));
+        console.log("JSON completo (para depuración de estructura, no se encontró Consulta_RCCOORResult):", JSON.stringify(jsonData, null, 2));
         setIsFetchingCatastroInfo(false);
         return;
       }
       
       const control = result.control;
+
+      // Log the full jsonData if errors are indicated by control.cuerr, for easier debugging of error structure
+      if (control && typeof control.cuerr === 'number' && control.cuerr > 0) {
+        console.log("Respuesta completa del Catastro (con control.cuerr > 0):", JSON.stringify(jsonData, null, 2));
+      }
+      
       // Check if control exists and cuerr is a number indicating one or more errors
       if (control && typeof control.cuerr === 'number' && control.cuerr > 0) {
-        const errorsFromLerr = result.lerr?.err
-          ? (Array.isArray(result.lerr.err) ? result.lerr.err : [result.lerr.err])
+        // Try to find the error container, checking for common variations like lerr or lErr
+        const errorContainer = result.lerr ?? result.lErr;
+
+        const errorsFromApi = errorContainer?.err
+          ? (Array.isArray(errorContainer.err) ? errorContainer.err : [errorContainer.err])
           : [];
 
         let finalErrorMessage: string;
 
-        if (errorsFromLerr.length > 0) {
-          const firstApiError = errorsFromLerr[0];
+        if (errorsFromApi.length > 0) {
+          const firstApiError = errorsFromApi[0];
           const errorCode = firstApiError?.cod; 
           const errorDesc = firstApiError?.des;
 
@@ -125,24 +134,22 @@ const App: React.FC = () => {
           finalErrorMessage = `Catastro: ${errorMsgToDisplay} (Código: ${errorCodeToDisplay})`;
           
           console.warn(
-            "Error funcional Catastro (con detalles de lerr.err):",
+            "Error funcional Catastro (con detalles de errorContainer.err):",
             `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
             `Primer error interpretado: cod='${errorCodeToDisplay}', des='${errorMsgToDisplay}'.`,
-            "Detalle completo lerr:", JSON.stringify(result.lerr, null, 2)
+            "Error container:", errorContainer ? JSON.stringify(errorContainer, null, 2) : "No presente"
           );
 
         } else {
-          // control.cuerr > 0 but no errors found in lerr.err.
-          let baseMessage = `Catastro: El servicio reportó ${control.cuerr} error(es) sin detalles específicos.`;
-          if (control.des && typeof control.des === 'string' && control.des.trim() !== '') {
-            baseMessage += ` Descripción general del control: ${control.des.trim()}`;
-          }
-          finalErrorMessage = baseMessage;
+          // Fallback if control.cuerr > 0 but no specific errors found in errorContainer.err
+          // Use the fallback suggested by the user.
+          finalErrorMessage = `Catastro: Error desconocido del Catastro (Código: ${control.cuerr})`;
           console.warn(
-              "Error funcional Catastro (sin detalles en lerr.err):",
+              "Error funcional Catastro (sin detalles en errorContainer.err o errorContainer no presente, usando fallback):",
               `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
               `control.des: '${control.des || 'No disponible'}'.`,
-              "Respuesta completa lerr:", result.lerr ? JSON.stringify(result.lerr, null, 2) : "lerr no presente"
+              "Error container:", errorContainer ? JSON.stringify(errorContainer, null, 2) : "No presente",
+              "Mensaje generado:", finalErrorMessage
           );
         }
         setCatastroError(finalErrorMessage);
