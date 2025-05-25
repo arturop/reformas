@@ -53,7 +53,9 @@ const App: React.FC = () => {
             // If proxy returns JSON error, parse it
             if (response.headers.get('content-type')?.includes('application/json')) {
                 const jsonError = JSON.parse(responseText);
-                errorDetails = jsonError.error || jsonError.message || responseText;
+                // Prioritize 'details' (from our proxy's 500 error structure),
+                // then 'error', then 'message', then the raw text.
+                errorDetails = jsonError.details || jsonError.error || jsonError.message || responseText;
             }
         } catch (parseError) {
             // Ignore if not JSON, errorDetails remains responseText
