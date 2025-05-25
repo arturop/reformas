@@ -5,9 +5,9 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse,
 ) {
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST') { // Frontend still POSTs to this proxy
     res.setHeader('Allow', ['POST']);
-    res.status(405).json({ error: 'Method Not Allowed' });
+    res.status(405).json({ error: 'Method Not Allowed. Proxy expects POST from frontend.' });
     return;
   }
 
@@ -18,45 +18,34 @@ export default async function handler(
     return;
   }
 
-  // Corrected XML body for Consulta_RCCOOR operation with tempuri.org namespace
-  const soapRequestBody = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Header/>
-  <soap:Body>
-    <Consulta_RCCOOR xmlns="http://tempuri.org/OVCServWeb/OVCCoordenadas">
-      <CoorX>${utmX}</CoorX>
-      <CoorY>${utmY}</CoorY>
-      <SRS>${srs}</SRS>
-    </Consulta_RCCOOR>
-  </soap:Body>
-</soap:Envelope>
-  `.trim();
-
-  // Reverted to the .asmx service endpoint
-  const catastroApiUrl = `https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCoordenadas.asmx`;
+  // Construct the GET URL for Catastro service
+  // Note: Parameter names are Coordenada_X, Coordenada_Y, SRS as per Catastro's GET interface
+  const catastroServiceUrl = new URL(`https://ovc.catastro.meh.es/ovcservweb/ovcswlocalizacionrc/ovccoordenadas.asmx/Consulta_RCCOOR`);
+  catastroServiceUrl.searchParams.append('SRS', srs);
+  catastroServiceUrl.searchParams.append('Coordenada_X', String(utmX));
+  catastroServiceUrl.searchParams.append('Coordenada_Y', String(utmY));
 
   try {
-    const catastroResponse = await fetch(catastroApiUrl, {
-      method: 'POST',
+    const catastroResponse = await fetch(catastroServiceUrl.toString(), {
+      method: 'GET',
       headers: {
-        'Content-Type': 'text/xml;charset=UTF-8',
-        // SOAPAction for Consulta_RCCOOR using tempuri.org
-        'SOAPAction': '"http://tempuri.org/OVCServWeb/OVCCoordenadas/Consulta_RCCOOR"'
+        // No SOAPAction needed for GET
+        // 'Accept': 'application/xml' // Optional, but good practice
       },
-      body: soapRequestBody,
     });
 
     const responseText = await catastroResponse.text();
 
-    res.setHeader('Content-Type', catastroResponse.headers.get('Content-Type') || 'text/xml;charset=UTF-8');
+    // Forward Catastro's response (status, content-type, body)
+    res.setHeader('Content-Type', catastroResponse.headers.get('Content-Type') || 'application/xml;charset=UTF-8'); // Default to XML
     res.status(catastroResponse.status).send(responseText);
 
   } catch (error: any) {
-    console.error("Proxy error connecting to Catastro API:", error);
+    console.error("Proxy error connecting to Catastro API (GET request):", error);
     
     let details = error.message;
     if (error.cause) {
-      const cause = error.cause as any; // Type assertion for easier access
+      const cause = error.cause as any; 
       let causeDetails = [];
       if (cause.message) causeDetails.push(cause.message);
       if (cause.code) causeDetails.push(`Code: ${cause.code}`);
@@ -73,9 +62,10 @@ export default async function handler(
     }
 
     res.status(500).json({ 
-        error: 'Internal Server Error in proxy while contacting Catastro API.', 
+        error: 'Internal Server Error in proxy while contacting Catastro API via GET.', 
         details: details 
     });
   }
 }
+
 
