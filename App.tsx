@@ -35,7 +35,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const fetchCatastroInfo = async (geoCoords: GeolocationCoordinates | null) => {
+  const fetchCatastroInfo = useCallback(async (geoCoords: GeolocationCoordinates | null) => {
     setIsFetchingCatastroInfo(true);
     setCatastroInfo(null);
     setCatastroError(null);
@@ -78,7 +78,7 @@ const App: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ utmX, utmY, srs: srsForCatastro }), // Send real transformed UTM with EPSG:23030
+        body: JSON.stringify({ utmX, utmY, srs: srsForCatastro }),
       });
       
       const jsonData = await response.json();
@@ -101,33 +101,49 @@ const App: React.FC = () => {
       }
       
       const control = result.control;
-      if (control && typeof control.cuerr === 'number' && control.cuerr !== 0) {
-        let errorDesc: string | undefined = undefined;
+      // Check if control exists and cuerr is a number indicating one or more errors
+      if (control && typeof control.cuerr === 'number' && control.cuerr > 0) {
+        // Correctly interpret Catastro errors as per user guidance:
+        // control.cuerr is the COUNT of errors.
+        // The actual error code/description are in result.lerr.err.
 
-        if (result.lerr && result.lerr.err) {
-          console.warn("Detalle de error funcional del Catastro (lerr):", JSON.stringify(result.lerr, null, 2));
-          const errors = Array.isArray(result.lerr.err) ? result.lerr.err : [result.lerr.err];
-          if (errors.length > 0 && errors[0] && typeof errors[0].des === 'string' && errors[0].des.trim() !== '') {
-            errorDesc = errors[0].des;
-          }
-        }
+        // 1) Agrupa errores en array
+        const errorsFromLerr = result.lerr?.err
+          ? (Array.isArray(result.lerr.err) ? result.lerr.err : [result.lerr.err])
+          : [];
 
-        if (!errorDesc && control.des && typeof control.des === 'string' && control.des.trim() !== '') {
-          errorDesc = control.des;
-        }
+        // 2) Saca el primero (si existe)
+        const firstApiError = errorsFromLerr[0]; // undefined if errorsFromLerr is empty
         
-        if (control.cuerr === 1 && (!errorDesc || errorDesc === "Error desconocido del Catastro")) {
-            errorDesc = "No se encontró información catastral para las coordenadas proporcionadas (EPSG:23030) o éstas se encuentran fuera del ámbito del Catastro español.";
-        } else if (!errorDesc) {
-            errorDesc = "Error desconocido del Catastro";
+        // Use firstApiError.cod if available, otherwise NaN (as per user example).
+        const errorCodeToDisplay = firstApiError?.cod ?? NaN; 
+        
+        // Use firstApiError.des if available, otherwise a default message.
+        const errorMsgToDisplay  = (firstApiError && typeof firstApiError.des === 'string' && firstApiError.des.trim() !== '')
+                                   ? firstApiError.des.trim()
+                                   : "Error desconocido del Catastro";
+        
+        // 3) Muestra esa info al usuario
+        const finalErrorMessage = `Catastro: ${errorMsgToDisplay} (Código: ${errorCodeToDisplay})`;
+        
+        console.warn(
+            "Error funcional Catastro:",
+            `control.cuerr: ${control.cuerr}, control.cucoor: ${control.cucoor}.`,
+            `Interpretado como: ${finalErrorMessage}`
+        );
+        if (result.lerr) {
+            console.warn("Detalle completo lerr:", JSON.stringify(result.lerr, null, 2));
+        } else {
+            // This case (cuerr > 0 but no lerr) should be rare if API behaves as per docs.
+            console.warn("Advertencia: control.cuerr > 0 pero lerr no estaba presente en la respuesta.");
         }
 
-        console.warn("Error funcional desde la API del Catastro (JSON):", control.cuerr, errorDesc);
-        setCatastroError(`Catastro: ${errorDesc} (Código: ${control.cuerr})`);
+        setCatastroError(finalErrorMessage);
         setIsFetchingCatastroInfo(false);
         return;
       }
       
+      // If control.cuerr is 0 or not present, proceed to parse data
       let referenciaCatastral: string | null = null;
       let direccion: string | null = null;
       const coordData = result.coordenadas?.coord;
@@ -145,11 +161,11 @@ const App: React.FC = () => {
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-        if (!(control && typeof control.cuerr === 'number' && control.cuerr !== 0)) {
-            // Only set this if there wasn't already a Catastro functional error
-            setCatastroError("No se encontró información catastral específica (referencia o dirección) en la respuesta JSON, aunque no se reportó error por el Catastro.");
-            console.log("JSON del Catastro (vía proxy, para depuración de datos faltantes):", JSON.stringify(jsonData, null, 2));
-        }
+        // No specific data found, but also no functional error reported by Catastro's control.cuerr
+        // This means the API call was successful (cuerr=0), but the specific parcel might not have data.
+        // This message will be shown in the red error box.
+        setCatastroError("No se encontró información catastral específica (referencia o dirección) para la ubicación, aunque la consulta al Catastro fue exitosa (sin errores funcionales).");
+        console.log("Respuesta del Catastro (sin errores funcionales, pero sin datos específicos):", JSON.stringify(jsonData, null, 2));
       }
 
     } catch (e: any) {
@@ -162,7 +178,7 @@ const App: React.FC = () => {
     } finally {
       setIsFetchingCatastroInfo(false);
     }
-  };
+  }, []); // fetchCatastroInfo is stable, no external deps that change
 
   const handleGetLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -212,7 +228,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-sky-600 to-indigo-700 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans antialiased">
       <div className="bg-white bg-opacity-25 backdrop-blur-lg shadow-2xl rounded-xl p-6 sm:p-8 max-w-lg w-full text-slate-800">
         <header className="mb-6 text-center">
-          <h1 className="text-3xl font-bold text-slate-700">GeoCatastro</h1>
+          <h1 className="text-4xl font-bold text-slate-700">GeoCatastro</h1>
           <p className="text-sm text-slate-600 mt-1">Consulta la información catastral de tu ubicación</p>
         </header>
 
@@ -241,7 +257,7 @@ const App: React.FC = () => {
           <button
             onClick={handleGetLocation}
             disabled={isLoadingLocation || isFetchingCatastroInfo}
-            className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-live="polite"
             aria-busy={isLoadingLocation || isFetchingCatastroInfo}
           >
@@ -264,7 +280,7 @@ const App: React.FC = () => {
         )}
 
         {coordinates && !locationError && (
-          <div className="mb-4 p-4 bg-slate-50 rounded-lg shadow">
+          <div className="mb-4 p-4 bg-white rounded-lg shadow-lg">
             <h3 className="text-lg font-semibold text-slate-700 mb-2">Coordenadas Geográficas (WGS84)</h3>
             <p className="text-sm text-slate-600"><strong>Latitud:</strong> {coordinates.latitude.toFixed(6)}</p>
             <p className="text-sm text-slate-600"><strong>Longitud:</strong> {coordinates.longitude.toFixed(6)}</p>
@@ -273,7 +289,7 @@ const App: React.FC = () => {
         )}
 
         {utmCoordinatesForDisplay && !catastroError && (
-            <div className="mb-4 p-4 bg-slate-50 rounded-lg shadow">
+            <div className="mb-4 p-4 bg-white rounded-lg shadow-lg">
                 <h3 className="text-lg font-semibold text-slate-700 mb-2">Coordenadas UTM ({utmCoordinatesForDisplay.srs})</h3>
                 <p className="text-sm text-slate-600"><strong>X:</strong> {utmCoordinatesForDisplay.x.toLocaleString()}</p>
                 <p className="text-sm text-slate-600"><strong>Y:</strong> {utmCoordinatesForDisplay.y.toLocaleString()}</p>
@@ -281,14 +297,22 @@ const App: React.FC = () => {
         )}
         
         {catastroInfo && (catastroInfo.referencia || catastroInfo.direccion) && !catastroError && (
-          <div className="p-4 bg-green-50 border-l-4 border-green-500 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-green-700 mb-2">Información Catastral</h3>
-            {catastroInfo.referencia && <p className="text-sm text-green-600"><strong>Referencia Catastral:</strong> {catastroInfo.referencia}</p>}
-            {catastroInfo.direccion && <p className="text-sm text-green-600"><strong>Dirección:</strong> {catastroInfo.direccion}</p>}
+          <div className="p-4 bg-white rounded-lg shadow-lg">
+            <h3 className="text-lg font-semibold text-slate-700 mb-2">Información Catastral</h3>
+            {catastroInfo.referencia && <p className="text-sm text-slate-600"><strong>Referencia Catastral:</strong> {catastroInfo.referencia}</p>}
+            {catastroInfo.direccion && <p className="text-sm text-slate-600"><strong>Dirección:</strong> {catastroInfo.direccion}</p>}
           </div>
         )}
         
-        {/* Message if no specific data found, but also no errors and location was obtained */}
+        {/* Message if no specific data found, but also no errors and location was obtained.
+            This amber box will show if:
+            - Location was obtained (coordinates exist, no locationError)
+            - No catastro API call is in progress (isLoadingLocation, isFetchingCatastroInfo are false)
+            - Crucially, no catastroError has been set (this means the API call was successful AND specific data was found OR the API call failed in a way not setting catastroError directly yet)
+            - And, catastroInfo is null or has no specific data.
+            Given the current logic where missing data after a "successful" API call (cuerr=0) *sets* catastroError,
+            this amber box condition might be difficult to reach. It's kept for completeness.
+        */}
         {coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError && 
          (!catastroInfo || (!catastroInfo.referencia && !catastroInfo.direccion)) && (
           <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
