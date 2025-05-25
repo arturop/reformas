@@ -1,5 +1,5 @@
 {
-  "name": "detector-de-coordenadas",
+  "name": "reformas",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,8 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "react/jsx-runtime": "^19.1.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "@google/genai": "^1.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

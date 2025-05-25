@@ -1,5 +1,5 @@
 {
-  "name": "Detector de Coordenadas",
+  "name": "Reformas",
   "description": "Una aplicación sencilla para obtener y mostrar tus coordenadas geográficas (latitud y longitud) después de solicitar permiso.",
   "requestFramePermissions": []
 }
