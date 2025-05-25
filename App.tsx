@@ -10,18 +10,17 @@ const App: React.FC = () => {
   const [catastroInfo, setCatastroInfo] = useState<{ referencia: string | null; direccion: string | null } | null>(null);
   const [catastroError, setCatastroError] = useState<string | null>(null);
   const [isFetchingCatastroInfo, setIsFetchingCatastroInfo] = useState<boolean>(false);
-  const [showMixedContentWarning, setShowMixedContentWarning] = useState<boolean>(false);
+  const [showApiWarning, setShowApiWarning] = useState<boolean>(false);
 
   useEffect(() => {
-    if (
-      window.location.protocol !== 'https:' &&
-      window.location.hostname !== 'localhost' &&
-      window.location.hostname !== '127.0.0.1'
-    ) {
-      setIsNonSecureContext(true); // HTTP context, geolocation might be an issue but not mixed content for API
-    } else if (window.location.protocol === 'https:') {
-      // HTTPS context, potential mixed content if Catastro API is HTTP
-      setShowMixedContentWarning(true);
+    // Mostrar advertencia si la página está en HTTP (geolocalización podría ser menos fiable)
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      setIsNonSecureContext(true);
+    }
+    // Mostrar advertencia sobre API si la página está en HTTPS (posibles problemas de CORS)
+    // ya que la API del Catastro, aunque HTTPS, podría tener restricciones de CORS.
+    if (window.location.protocol === 'https:') {
+      setShowApiWarning(true);
     }
   }, []);
 
@@ -30,24 +29,15 @@ const App: React.FC = () => {
     setCatastroInfo(null);
     setCatastroError(null);
 
-    // Servicio de Consulta de datos catastrales por coordenadas de la Sede Electrónica del Catastro (España)
-    // Devuelve XML. Ejemplo: http://ovc.catastro.mineco.es/ovcservweb/OVCServWeb.asmx/Consulta_DNPLOC_Pol?SRS=EPSG:4326&Coordenada_X=[longitud]&Coordenada_Y=[latitud]
+    // URL del servicio de Catastro (HTTPS)
     const catastroApiUrl = `https://ovc.catastro.mineco.es/ovcservweb/OVCServWeb.asmx/Consulta_DNPLOC_Pol?SRS=EPSG:4326&Coordenada_X=${coords.longitude}&Coordenada_Y=${coords.latitude}`;
     
-    // Nota: Para evitar problemas de CORS y mixed content en producción, se necesitaría un backend proxy.
-    // Como alternativa, se puede usar un proxy CORS simple para desarrollo si es necesario, pero no es una solución de producción.
-    // const proxyUrl = 'https://cors-anywhere.herokuapp.com/'; // Ejemplo de proxy CORS, usar con precaución.
-    // const urlToFetch = proxyUrl + catastroApiUrl; // Descomentar para usar con proxy CORS
-
     try {
-      // Se usa directamente la URL del catastro. Si hay problemas de CORS o Mixed Content, esta llamada fallará.
       const response = await fetch(catastroApiUrl); 
       
       if (!response.ok) {
-        // Esto podría ser un error HTTP antes de llegar a la lógica de la API del Catastro
-        // o un error de CORS si el navegador lo bloquea.
         console.error("Error en la respuesta de la red o CORS:", response.status, response.statusText);
-        setCatastroError(`Error de red o CORS al contactar el servicio del Catastro (status: ${response.status}). Asegúrate de que no haya bloqueos de CORS o contenido mixto si estás en HTTPS.`);
+        setCatastroError(`Error al contactar el servicio del Catastro (status: ${response.status}). Esto puede deberse a restricciones de CORS o problemas de red.`);
         setIsFetchingCatastroInfo(false);
         return;
       }
@@ -66,9 +56,9 @@ const App: React.FC = () => {
         return;
       }
       
-      const pc1Node = xmlDoc.querySelector("pc1"); // Referencia Catastral parte 1
-      const pc2Node = xmlDoc.querySelector("pc2"); // Referencia Catastral parte 2
-      const ldtNode = xmlDoc.querySelector("ldt"); // Localización / Dirección
+      const pc1Node = xmlDoc.querySelector("pc1");
+      const pc2Node = xmlDoc.querySelector("pc2");
+      const ldtNode = xmlDoc.querySelector("ldt");
 
       const referenciaCatastral = pc1Node && pc2Node ? `${pc1Node.textContent}${pc2Node.textContent}` : null;
       const direccion = ldtNode ? ldtNode.textContent : null;
@@ -81,10 +71,9 @@ const App: React.FC = () => {
 
     } catch (e: any) {
       console.error("Error al obtener información del Catastro:", e);
-      // Este error puede ser una falla de red, CORS, o un error en el parseo del XML.
       let detailedError = e.message;
       if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
-          detailedError = "Fallo al realizar la solicitud. Esto podría deberse a un problema de red, bloqueo de CORS por el navegador, o porque el servicio del Catastro no está accesible. Si estás en HTTPS, podría ser un problema de contenido mixto (HTTP API desde HTTPS).";
+          detailedError = "Fallo al realizar la solicitud. Esto podría deberse a un problema de red o un bloqueo de CORS por parte del navegador si el servicio del Catastro no permite solicitudes desde este origen.";
       }
       setCatastroError(`Error al procesar la solicitud al Catastro: ${detailedError}`);
     } finally {
@@ -150,7 +139,7 @@ const App: React.FC = () => {
         </header>
 
         <main>
-          {isNonSecureContext && !locationError && (
+          {isNonSecureContext && (
             <div role="alert" className="bg-yellow-500 bg-opacity-90 text-yellow-900 p-4 rounded-md mb-6 shadow-lg text-left">
               <div className="flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2">
@@ -165,22 +154,21 @@ const App: React.FC = () => {
             </div>
           )}
           
-          {showMixedContentWarning && (
+          {showApiWarning && ( // Renombrado de showMixedContentWarning
              <div role="alert" className="bg-orange-500 bg-opacity-90 text-orange-900 p-4 rounded-md mb-6 shadow-lg text-left">
               <div className="flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2">
                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                 </svg>
-                <h3 className="font-semibold text-lg">Advertencia Importante:</h3>
+                <h3 className="font-semibold text-lg">Advertencia sobre API Externa:</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                Esta aplicación intenta conectarse al servicio del Catastro que opera sobre HTTP. Dado que estás accediendo a esta página mediante HTTPS,
-                tu navegador podría bloquear la solicitud al Catastro por seguridad (política de "contenido mixto"). 
-                Si la información catastral no aparece, esta podría ser la causa. Para una funcionalidad completa, se requeriría un backend proxy o que el servicio del Catastro use HTTPS.
+                Esta aplicación se conecta a un servicio externo del Catastro. Si la información catastral no aparece, podría deberse a
+                restricciones de red, problemas temporales con el servicio del Catastro, o políticas de seguridad de tu navegador (como CORS)
+                que impidan la comunicación.
               </p>
             </div>
           )}
-
 
           <button
             onClick={handleGetLocation}
@@ -268,7 +256,7 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {!isLoadingLocation && !isFetchingCatastroInfo && !locationError && !coordinates && !isNonSecureContext && (
+          {!isLoadingLocation && !isFetchingCatastroInfo && !locationError && !coordinates && !isNonSecureContext && !showApiWarning && (
              <p className="text-indigo-200 text-sm sm:text-base mt-4">
               Haz clic en el botón para obtener tu ubicación e información del Catastro.
              </p>
