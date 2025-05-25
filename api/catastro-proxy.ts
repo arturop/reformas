@@ -1,3 +1,4 @@
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(
@@ -39,7 +40,7 @@ export default async function handler(
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        'SOAPAction': 'http://catastro.meh.es/Consulta_CPMRC' // Important for SOAP
+        'SOAPAction': '"http://catastro.meh.es/Consulta_CPMRC"' // Added double quotes
       },
       body: soapRequestBody,
     });
@@ -58,3 +59,4 @@ export default async function handler(
     });
   }
 }
+
