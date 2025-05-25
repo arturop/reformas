@@ -40,7 +40,7 @@ export default async function handler(
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        // Reverted to WSDL-specified SOAPAction, ensuring it's quoted for the HTTP header
+        // Reverted SOAPAction to the WSDL-specified value
         'SOAPAction': '"http://catastro.meh.es/Consulta_CPMRC"'
       },
       body: soapRequestBody,
