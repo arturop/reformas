@@ -1,19 +1,18 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
 
-import path from 'path';
-import { defineConfig } from 'vite';
-
-export default defineConfig(({ mode }) => {
-    // const env = loadEnv(mode, '.', ''); // No es necesario si no cargamos GEMINI_API_KEY
-    return {
-      base: '/reformas/', // Asegúrate de que 'reformas' es el nombre de tu repositorio
-      // define: { // Ya no se necesita definir la API_KEY de Gemini
-      //   'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      //   'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      // },
-      resolve: {
-        alias: {
-          '@': path.resolve(__dirname, '.'),
-        }
-      }
-    };
-});
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  base: '/reformas/', // Asegúrate de que 'reformas' es el nombre de tu repositorio o ajusta según sea necesario
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, '.'), // Permite importar desde la raíz del proyecto con @/
+    }
+  },
+  server: {
+    port: 3000, // Puedes cambiar el puerto si lo deseas
+    open: true // Abre automáticamente el navegador al iniciar el servidor de desarrollo
+  }
+})

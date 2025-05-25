@@ -9,51 +9,75 @@ Esta aplicación te permite obtener información catastral básica (referencia y
 *   Muestra la referencia catastral y la dirección si están disponibles.
 *   Manejo de errores de geolocalización y del servicio del Catastro.
 *   Advertencia sobre posibles problemas de CORS o red al contactar el servicio externo del Catastro.
+*   Interfaz responsiva y moderna construida con React, TypeScript y Tailwind CSS.
 
 ## Ejecutar Localmente
 
-**Prerrequisitos:** Node.js
+**Prerrequisitos:** Node.js (v18+) y npm/yarn.
 
-1.  Clona el repositorio (si aún no lo has hecho).
-2.  Navega a la carpeta del proyecto.
-3.  Instala las dependencias:
+1.  **Clona el repositorio** (si es un proyecto separado) o asegúrate de tener todos los archivos (`index.html`, `App.tsx`, `index.tsx`, `package.json`, `vite.config.ts`, `tsconfig.json`, `tailwind.config.js`, `postcss.config.js`).
+
+2.  **Navega a la carpeta del proyecto** en tu terminal.
+
+3.  **Instala las dependencias:**
     ```bash
     npm install
     ```
-4.  Ejecuta la aplicación en modo desarrollo:
+    o si usas yarn:
+    ```bash
+    yarn install
+    ```
+
+4.  **Ejecuta la aplicación en modo desarrollo:**
     ```bash
     npm run dev
     ```
-La aplicación estará disponible en `http://localhost:5173` (o el puerto que Vite asigne).
+    o
+    ```bash
+    yarn dev
+    ```
+    La aplicación estará disponible generalmente en `http://localhost:5173` (Vite te indicará la URL exacta).
 
-## Despliegue en GitHub Pages (Automatizado con GitHub Actions)
+## Archivos de Configuración Clave
 
-Para que la aplicación funcione correctamente en GitHub Pages y se actualice automáticamente cada vez que envías cambios a tu rama `main`, utilizamos GitHub Actions. Esto **elimina la necesidad de ejecutar `npm run build` localmente** para el despliegue.
+*   **`vite.config.ts`**: Configuración para Vite, incluyendo la base para despliegues.
+*   **`tailwind.config.js`**: Configuración de Tailwind CSS.
+*   **`postcss.config.js`**: Configuración de PostCSS (usualmente para Tailwind y Autoprefixer).
+*   **`tsconfig.json`**: Configuración del compilador de TypeScript.
 
-**Pasos para activar el despliegue automático:**
+## Despliegue
 
-1.  **Configura `base` en `vite.config.ts`:**
-    Asegúrate de que la propiedad `base` en `vite.config.ts` esté configurada con el nombre de tu repositorio. Por ejemplo, si tu repositorio es `https://github.com/tu-usuario/reformas`, la base debe ser `'/reformas/'`.
+Para desplegar esta aplicación (por ejemplo, en GitHub Pages):
+
+1.  **Ajusta `base` en `vite.config.ts`**:
+    Si vas a desplegar en un subdirectorio (ej. `https://tu-usuario.github.io/tu-repositorio/`), actualiza la propiedad `base` en `vite.config.ts`:
     ```javascript
     // vite.config.ts
     export default defineConfig({
-      base: '/reformas/', // Ajusta esto al nombre de tu repositorio
+      base: '/tu-repositorio/', // Ajusta esto al nombre de tu repositorio
+      plugins: [react()],
       // ... otras configuraciones
     });
     ```
-    Este paso es crucial para que los enlaces a los archivos (CSS, JS) funcionen correctamente en GitHub Pages.
+    Si despliegas en la raíz de un dominio, `base` puede ser `'/'`.
 
-2.  **Commit y Push del Workflow:**
-    El archivo `.github/workflows/deploy.yml` (que se incluye en estos cambios) define el proceso de build y despliegue. Simplemente haz commit y push de este archivo a tu repositorio.
+2.  **Construye la aplicación:**
+    ```bash
+    npm run build
+    ```
+    o
+    ```bash
+    yarn build
+    ```
+    Esto generará una carpeta `dist` con los archivos estáticos listos para el despliegue.
 
-3.  **Configura GitHub Pages en tu Repositorio:**
-    a.  Una vez que el workflow se haya ejecutado por primera vez después de un push a `main` (puedes verificarlo en la pestaña "Actions" de tu repositorio), creará una nueva rama llamada `gh-pages` (o la que se configure en el workflow).
-    b.  Ve a la configuración de tu repositorio en GitHub: `Settings` > `Pages`.
-    c.  En "Build and deployment", bajo "Source", selecciona "Deploy from a branch".
-    d.  Elige la rama `gh-pages` como fuente y la carpeta `/(root)` (ya que la rama `gh-pages` contendrá directamente los archivos de la carpeta `dist`).
-    e.  Guarda los cambios.
+3.  **Despliega la carpeta `dist`** a tu proveedor de hosting estático preferido.
 
-¡Eso es todo! Ahora, cada vez que hagas `git push` a tu rama `main`, GitHub Actions construirá tu aplicación y la desplegará. Tu sitio en GitHub Pages se actualizará automáticamente. La URL será algo como `https://tu-usuario.github.io/reformas/`.
+### Ejemplo: Despliegue en GitHub Pages
+
+Puedes usar GitHub Actions para automatizar el despliegue. Un workflow típico (ej. `.github/workflows/deploy.yml`) construiría y desplegaría la rama `gh-pages`.
 
 **Importante sobre el Servicio del Catastro y CORS:**
-El servicio web del Catastro (`https://ovc.catastro.mineco.es/...`) opera sobre HTTPS. Sin embargo, como con cualquier API externa, pueden existir restricciones de CORS (Cross-Origin Resource Sharing) que impidan que tu aplicación (alojada en `github.io`) haga solicitudes directas desde el navegador. Si experimentas errores al obtener la información catastral, CORS podría ser la causa. Para producción robusta, una solución común es usar un backend propio que actúe como proxy para las solicitudes al servicio del Catastro.
+El servicio web del Catastro (`https://ovc.catastro.mineco.es/...`) opera sobre HTTPS. Sin embargo, como con cualquier API externa, pueden existir restricciones de CORS (Cross-Origin Resource Sharing) que impidan que tu aplicación (especialmente si está alojada en un dominio diferente como `github.io`) haga solicitudes directas desde el navegador.
+
+Si experimentas errores al obtener la información catastral (especialmente errores de red o `Failed to fetch` en la consola del navegador), CORS podría ser la causa. Para una producción robusta, una solución común es usar un backend propio (un proxy) que reciba la solicitud desde tu frontend, luego llame al servicio del Catastro desde el servidor (donde las restricciones CORS no aplican de la misma manera), y finalmente devuelva la respuesta a tu frontend.
