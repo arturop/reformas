@@ -1,3 +1,4 @@
+
 // catastro-proxy.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -20,16 +21,16 @@ async function fetchParcelDetailsAndRespond(
   distancia: number | null,
   contextMessage?: string // Optional message (e.g., from ring search)
 ): Promise<void> {
-  const detalleUrl = new URL(
-    'https://ovc.catastro.meh.es/OVCServWeb/' + // Corrected domain
-    'OVCWcfCallejero/COVCCallejero.svc/json/Consulta_DNPRC'
-  );
-  detalleUrl.searchParams.append('RefCat', refCat); // Corrected parameter name
+  const baseDetalleUrl =
+    'https://ovc.catastro.meh.es/OVCServWeb/' +
+    'OVCWcfCallejero/COVCCallejero.svc/json/Consulta_DNPRC';
+  const queryDetalle = '?RefCat=' + encodeURIComponent(refCat);
+  const detalleUrlString = baseDetalleUrl + queryDetalle;
 
-  console.log(`>>> CAT DETAILS URL: ${detalleUrl.toString()}`);
+  console.log(`>>> CAT DETAILS URL (Manual): ${detalleUrlString}`);
 
   try {
-    const detRes = await fetch(detalleUrl.toString(), {
+    const detRes = await fetch(detalleUrlString, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -138,18 +139,19 @@ async function buscarPorAnillos(
       const intentoX = originalUtmX + dx;
       const intentoY = originalUtmY + dy;
 
-      const url = new URL(
+      const baseRingUrl =
         'https://ovc.catastro.meh.es/OVCServWeb/' +
-        'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia'
-      );
-      url.searchParams.append('CoorX', intentoX.toFixed(2));
-      url.searchParams.append('CoorY', intentoY.toFixed(2));
-      url.searchParams.append('SRS', srs);
+        'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia';
+      const queryRing =
+        '?CoorX=' + encodeURIComponent(intentoX.toFixed(2)) +
+        '&CoorY=' + encodeURIComponent(intentoY.toFixed(2)) +
+        '&SRS=' + encodeURIComponent(srs);
+      const ringUrlString = baseRingUrl + queryRing;
       
-      console.log(`>>> CAT RING URL: ${url.toString()}`);
+      console.log(`>>> CAT RING URL (Manual): ${ringUrlString}`);
 
       try {
-        const rres = await fetch(url.toString(), { method: 'GET', headers: { 'Accept': 'application/json' } });
+        const rres = await fetch(ringUrlString, { method: 'GET', headers: { 'Accept': 'application/json' } });
         
         const ringBodyText = await rres.text();
         console.log(`>>> CAT RING STATUS (${r}m, ${theta}rad): ${rres.status}`);
@@ -219,18 +221,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const distanciaUrl = new URL(
+  const baseDistanciaUrl =
     'https://ovc.catastro.meh.es/OVCServWeb/' +
-    'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia'
-  );
-  distanciaUrl.searchParams.append('CoorX', String(utmX));
-  distanciaUrl.searchParams.append('CoorY', String(utmY));
-  distanciaUrl.searchParams.append('SRS', srs);
+    'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia';
+  const queryDistancia =
+    '?CoorX=' + encodeURIComponent(String(utmX)) +
+    '&CoorY=' + encodeURIComponent(String(utmY)) +
+    '&SRS=' + encodeURIComponent(srs);
+  const distanciaUrlString = baseDistanciaUrl + queryDistancia;
 
-  console.log(`>>> CAT DIST URL (Initial): ${distanciaUrl.toString()}`);
+
+  console.log(`>>> CAT DIST URL (Initial, Manual): ${distanciaUrlString}`);
 
   try {
-    const distRes = await fetch(distanciaUrl.toString(), {
+    const distRes = await fetch(distanciaUrlString, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -329,9 +333,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (err: any) {
     console.error("Error crítico en el handler del proxy:", err);
+    // Avoid sending potentially sensitive stack traces to the client in production
+    // For debugging, you might want to log it or send more details
+    const errorMessage = (err instanceof Error) ? err.message : 'Error interno del proxy.';
+    const errorDetails = (err instanceof Error && err.stack && process.env.NODE_ENV !== 'production') ? err.stack : (typeof err === 'object' ? JSON.stringify(err) : String(err));
+    
     res.status(500).json({
-      error: err.message || 'Error interno del proxy.',
-      details: (typeof err === 'object' && err.stack) ? err.stack : (typeof err === 'object' ? JSON.stringify(err) : String(err))
+      error: errorMessage,
+      details: process.env.NODE_ENV !== 'production' ? errorDetails : undefined
     });
   }
 }
+
