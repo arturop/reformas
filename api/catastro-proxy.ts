@@ -1,3 +1,4 @@
+
 // catastro-proxy.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -15,7 +16,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // 1) Llamada a Consulta_RCCOOR_Distancia usando CoorX/CoorY
   const distanciaUrl = new URL(
     'https://ovc.catastro.meh.es/OVCServWeb/' +
     'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia'
@@ -29,47 +29,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
-    const distJson = await distRes.json();
 
-    // 2) Chequea errores funcionales y de HTTP
-    const distResult = distJson.Consulta_RCCOOR_DistanciaResult;
-    if (!distRes.ok || (distResult && distResult.control && distResult.control.cuerr > 0)) {
-      let errorMsg = 'Error en servicio de distancia del Catastro.';
-      let errorCode = distResult?.control?.cuerr || 'N/A';
-      if (distResult && distResult.lerr && distResult.lerr.err) {
-          const errDetails = Array.isArray(distResult.lerr.err) ? distResult.lerr.err[0] : distResult.lerr.err;
-          errorMsg = errDetails.des ? errDetails.des.trim() : errorMsg;
-          errorCode = errDetails.cod || errorCode;
-      }
-      console.error("Error from Consulta_RCCOOR_Distancia:", JSON.stringify(distJson, null, 2));
-      res.status(distRes.status !== 200 ? distRes.status : 500).json({ // Use actual error status or 500
-        error: 'Error al consultar parcelas cercanas.',
-        details: `${errorMsg} (Código: ${errorCode})` 
-      });
-      return;
-    }
-    
-    if (!distResult || !distResult.coordenadas_distancias || !distResult.coordenadas_distancias.coordd) {
-        console.error("Unexpected structure from Consulta_RCCOOR_Distancia:", JSON.stringify(distJson, null, 2));
-        res.status(500).json({ error: 'Respuesta inesperada del servicio de distancia del Catastro.' });
+    // Handle Catastro API's 404 for Consulta_RCCOOR_Distancia explicitly
+    if (distRes.status === 404) {
+        console.warn("Consulta_RCCOOR_Distancia devolvió 404 (No encontrado).");
+        res.status(200).json({
+            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
+            message: "No se encontró ninguna parcela catastral cercana. El servicio del Catastro no tiene datos para esta área específica o las coordenadas están fuera de su ámbito (Error 404 desde Catastro)."
+        });
         return;
     }
 
-    // 3) Toma la primera referencia más próxima
+    const distJson = await distRes.json();
+    const distResult = distJson.Consulta_RCCOOR_DistanciaResult;
+
+    // Handle other HTTP errors from Catastro OR functional errors (cuerr > 0)
+    if (!distRes.ok || (distResult?.control?.cuerr > 0)) {
+        let errorMsg = 'Error en servicio de distancia del Catastro.';
+        let errorCode = distResult?.control?.cuerr || 'N/A';
+        if (distResult?.lerr?.err) {
+            const errDetails = Array.isArray(distResult.lerr.err) ? distResult.lerr.err[0] : distResult.lerr.err;
+            errorMsg = errDetails.des ? errDetails.des.trim() : errorMsg;
+            errorCode = errDetails.cod || errorCode;
+        }
+        console.error("Error from Consulta_RCCOOR_Distancia:", JSON.stringify(distJson, null, 2));
+        res.status(distRes.ok ? 500 : distRes.status).json({
+            error: 'Error al consultar parcelas cercanas.',
+            details: `${errorMsg} (Código: ${errorCode})`
+        });
+        return;
+    }
+    
+    // Handle missing or malformed primary result structure after a 200 OK
+    if (!distResult?.coordenadas_distancias?.coordd) {
+        console.error("Estructura inesperada (sin coordd) from Consulta_RCCOOR_Distancia:", JSON.stringify(distJson, null, 2));
+        res.status(200).json({
+            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
+            message: 'Respuesta inesperada del servicio de distancia del Catastro (faltan datos de coordenadas_distancias).'
+        });
+        return;
+    }
+
     const coordd = distResult.coordenadas_distancias.coordd;
     const firstParcelContainer = Array.isArray(coordd) ? coordd[0] : coordd;
 
-    if (!firstParcelContainer || !firstParcelContainer.lpcd || !firstParcelContainer.lpcd.pcd) {
-        console.warn("No 'pcd' (parcel data) found in Consulta_RCCOOR_Distancia response:", JSON.stringify(distJson, null, 2));
-        res.status(404).json({ error: 'No se encontraron parcelas catastrales en la respuesta para las coordenadas proporcionadas.' });
+    // Handle missing 'pcd' (parcel details list) within the container
+    if (!firstParcelContainer?.lpcd?.pcd) {
+        console.warn("No 'pcd' (parcel data) found in Consulta_RCCOOR_Distancia (200 OK):", JSON.stringify(distJson, null, 2));
+        res.status(200).json({
+            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
+            message: "El servicio del Catastro respondió, pero no se encontraron datos de parcelas específicas (PCD) en la respuesta."
+        });
         return;
     }
+    
     const pcdList = firstParcelContainer.lpcd.pcd;
     const pcd = Array.isArray(pcdList) ? pcdList[0] : pcdList;
 
-    if (!pcd || !pcd.pc || !pcd.pc.pc1 || !pcd.pc.pc2) {
-        console.warn("Parcela más cercana no contiene referencia catastral (pc1, pc2):", JSON.stringify(pcd, null, 2));
-        res.status(404).json({ error: 'No se pudo determinar la referencia catastral de la parcela más cercana.' });
+    // Handle if the closest parcel found doesn't have essential reference info
+    if (!pcd?.pc?.pc1 || !pcd?.pc?.pc2) {
+        console.warn("Parcela más cercana no contiene referencia catastral completa (pc1, pc2):", JSON.stringify(pcd, null, 2));
+        res.status(200).json({
+            referenciaOriginal: null,
+            direccionOriginalLDT: pcd?.ldt || null,
+            distancia: pcd?.dis || null,
+            datosDetallados: null,
+            message: 'La parcela más cercana encontrada no contiene una referencia catastral completa.'
+        });
         return;
     }
 
@@ -107,35 +133,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           referenciaOriginal: refCat,
           direccionOriginalLDT: direccionLDT,
           distancia,
-          datosDetallados: null,
+          datosDetallados: null, // Indicate details are missing
+          message: `Se encontró parcela ${refCat} pero falló la obtención de detalles: ${errorMsg} (Código: ${errorCode})`
         });
         return;
     }
     
     // 5) Empaqueta y reenvía
-    // Extract data carefully, as fields might be missing
-    const direccionCompleta = detResult?.dt?.loc?.dir?.td || // Attempt to get full formatted address if available
+    const direccionCompleta = detResult?.dt?.loc?.dir?.td || 
                              (detResult?.dt?.loc?.dir ? `${detResult.dt.loc.dir.tv || ''} ${detResult.dt.loc.dir.nv || ''}`.trim() : null) ||
-                             direccionLDT; // Fallback to LDT if no better address from DNPRC
+                             direccionLDT; 
     
     const usoPrincipal = detResult?.bico?.[0]?.luso || detResult?.bico?.luso || null;
     const superficie = detResult?.bico?.[0]?.sfc || detResult?.bico?.sfc || null;
 
-
     res.status(200).json({
       referenciaOriginal: refCat,
-      direccionOriginalLDT: direccionLDT, // LDT from first call
+      direccionOriginalLDT: direccionLDT, 
       distancia,
       datosDetallados: {
         direccionCompleta: direccionCompleta,
         usoPrincipal: usoPrincipal,
-        superficie: superficie ? String(superficie) : null // Ensure superficie is string or null
+        superficie: superficie ? String(superficie) : null
       }
     });
 
   } catch (err: any) {
     console.error("Error en el handler del proxy:", err);
-    // Generic error, unsure if partial data is available
     res.status(500).json({
       error: err.message || 'Error interno del proxy.',
       details: (typeof err === 'object' && err.stack) ? err.stack : (typeof err === 'object' ? JSON.stringify(err) : String(err))

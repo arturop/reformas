@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useEffect } from 'react';
 import proj4 from 'proj4';
 import '@/lib/projDefs'; // Ensure EPSG:23030 definition is loaded
@@ -86,17 +87,17 @@ const App: React.FC = () => {
 
       if (!response.ok || 'error' in jsonData) {
         const errorResponse = jsonData as ProxyErrorResponse;
-        const errorDetails = errorResponse.details || errorResponse.error || JSON.stringify(jsonData);
-        console.error("Error desde el proxy o Catastro:", response.status, errorDetails, JSON.stringify(jsonData, null, 2));
-        setCatastroError(`Error del servicio: ${errorDetails}. (Status: ${response.status})`);
+        const errorMessage = errorResponse.details || errorResponse.error || JSON.stringify(jsonData);
+        console.error("Error desde el proxy o Catastro:", response.status, errorMessage, JSON.stringify(jsonData, null, 2));
+        setCatastroError(`Error del servicio: ${errorMessage}. (Status: ${response.status})`);
         
-        // Handle partial data if proxy returns it on error
-        if (errorResponse.referenciaOriginal) {
+        // Handle partial data if proxy returns it alongside an error object
+        if (errorResponse.referenciaOriginal || errorResponse.message) { // Check for message as well
             setCatastroInfo({
-                referenciaOriginal: errorResponse.referenciaOriginal,
+                referenciaOriginal: errorResponse.referenciaOriginal || null,
                 direccionOriginalLDT: errorResponse.direccionOriginalLDT || null,
                 distancia: errorResponse.distancia || null,
-                datosDetallados: null,
+                datosDetallados: null, // Assume details are missing if there's an error for them
                 message: errorResponse.message || "No se pudieron obtener todos los detalles.",
             });
         }
@@ -163,7 +164,7 @@ const App: React.FC = () => {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-  }, []); // No dependencies needed for handleGetLocation itself now
+  }, []);
 
 
   // Determine button text and state
@@ -177,17 +178,27 @@ const App: React.FC = () => {
 
   const renderCatastroData = () => {
     if (!catastroInfo) return null;
+
+    // Don't render this section if the primary info (refCat) is missing and there's a specific "no parcel" message
+    // The "no parcel" message is handled by renderAlerts
+    if (!catastroInfo.referenciaOriginal && catastroInfo.message) {
+        return null;
+    }
+
     return (
       <div className="space-y-4" role="region" aria-labelledby="catastro-data-heading">
         <h3 id="catastro-data-heading" className="sr-only">Información Catastral Detallada</h3>
-        <div className="p-4 bg-white rounded-lg shadow-lg">
-          <h4 className="text-lg font-semibold text-slate-700 mb-2">Finca Más Cercana</h4>
-          {catastroInfo.referenciaOriginal && <p className="text-sm text-slate-600"><strong>Ref. Catastral:</strong> {catastroInfo.referenciaOriginal}</p>}
-          {catastroInfo.direccionOriginalLDT && <p className="text-sm text-slate-600"><strong>Localización (LDT):</strong> {catastroInfo.direccionOriginalLDT}</p>}
-          {catastroInfo.distancia !== null && typeof catastroInfo.distancia === 'number' && (
-            <p className="text-sm text-slate-600"><strong>Distancia Aprox.:</strong> {catastroInfo.distancia.toFixed(2)} metros</p>
-          )}
-        </div>
+        
+        {catastroInfo.referenciaOriginal && (
+            <div className="p-4 bg-white rounded-lg shadow-lg">
+                <h4 className="text-lg font-semibold text-slate-700 mb-2">Finca Más Cercana</h4>
+                <p className="text-sm text-slate-600"><strong>Ref. Catastral:</strong> {catastroInfo.referenciaOriginal}</p>
+                {catastroInfo.direccionOriginalLDT && <p className="text-sm text-slate-600"><strong>Localización (LDT):</strong> {catastroInfo.direccionOriginalLDT}</p>}
+                {catastroInfo.distancia !== null && typeof catastroInfo.distancia === 'number' && (
+                    <p className="text-sm text-slate-600"><strong>Distancia Aprox.:</strong> {catastroInfo.distancia.toFixed(2)} metros</p>
+                )}
+            </div>
+        )}
 
         {catastroInfo.datosDetallados && (
           <div className="p-4 bg-white rounded-lg shadow-lg">
@@ -197,7 +208,9 @@ const App: React.FC = () => {
             {catastroInfo.datosDetallados.superficie && <p className="text-sm text-slate-600"><strong>Superficie:</strong> {catastroInfo.datosDetallados.superficie}</p>}
           </div>
         )}
-        {catastroInfo.message && (!catastroInfo.datosDetallados || Object.values(catastroInfo.datosDetallados).every(v => v === null || v === 'N/A' || v === '')) && (
+        {/* This message is for partial data scenarios where primary data might exist but details failed, 
+            and the proxy attached a specific message about that failure. */}
+        {catastroInfo.message && catastroInfo.referenciaOriginal && (!catastroInfo.datosDetallados || Object.values(catastroInfo.datosDetallados).every(v => v === null || v === 'N/A' || v === '')) && (
              <div className="p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
                 <p className="font-bold">Nota Adicional</p>
                 <p>{catastroInfo.message}</p>
@@ -245,27 +258,28 @@ const App: React.FC = () => {
         <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
           <p className="font-bold">Error de Información Catastral</p>
           <p>{catastroError}</p>
-          {/* Render partial Catastro info if available even with error */}
-          {catastroInfo && catastroInfo.referenciaOriginal && renderCatastroData()}
+          {/* Render partial Catastro info if available even with error and message exists */}
+          {catastroInfo && catastroInfo.referenciaOriginal && catastroInfo.message && renderCatastroData()}
         </div>
       );
     }
-     // Fallback message if no specific data was found after a successful-looking flow but catastroInfo is empty or only contains a message
-    if (coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError) {
-        if (!catastroInfo) { // If catastroInfo is null after fetch
-            return (
-                <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
-                    <p>No se pudo obtener información catastral para la ubicación. El servicio del Catastro no devolvió datos o hubo un problema en la comunicación.</p>
-                </div>
-            );
-        } else if (catastroInfo && !catastroInfo.referenciaOriginal && !catastroInfo.datosDetallados && catastroInfo.message) {
-             // Specific message if catastroInfo is present but essentially empty (only message)
-             return (
-                 <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
-                     <p>{catastroInfo.message}</p>
-                 </div>
-             );
-        }
+    // Handle "no parcel found" message from proxy (200 OK, but no refCat and a message)
+    if (catastroInfo && !catastroInfo.referenciaOriginal && catastroInfo.message) {
+        return (
+            <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
+                <p className="font-bold">Sin Parcela Catastral</p>
+                <p>{catastroInfo.message}</p>
+                <p className="text-sm mt-1">Quizá tu ubicación esté en el límite entre parcelas o fuera de una zona con datos catastrales disponibles.</p>
+            </div>
+        );
+    }
+    // Fallback message if no specific data was found after a successful-looking flow but catastroInfo is null
+    if (coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError && !catastroInfo) {
+        return (
+            <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
+                <p>No se pudo obtener información catastral para la ubicación. El servicio del Catastro no devolvió datos o hubo un problema en la comunicación.</p>
+            </div>
+        );
     }
     return null;
   }
@@ -315,8 +329,9 @@ const App: React.FC = () => {
         
         {renderAlerts()}
 
-        {/* Display Catastro Info if available and no catastroError (or if partial info is shown with error) */}
-        {catastroInfo && (!catastroError || (catastroError && catastroInfo.referenciaOriginal)) && renderCatastroData()}
+        {/* Display Catastro Info if available */}
+        {/* Updated condition: renderCatastroData if there's a refCat, OR if there's a message about partial data (even if refCat is there) */}
+        {catastroInfo && (catastroInfo.referenciaOriginal || (catastroInfo.message && !catastroError)) && renderCatastroData()}
         
         {/* Display Coordinates Info if available and no locationError */}
         {(coordinates || utmCoordinatesForDisplay) && !locationError && renderCoordinatesData()}
