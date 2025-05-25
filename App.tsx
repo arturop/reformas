@@ -10,7 +10,7 @@ const App: React.FC = () => {
   const [catastroInfo, setCatastroInfo] = useState<{ referencia: string | null; direccion: string | null } | null>(null);
   const [catastroError, setCatastroError] = useState<string | null>(null);
   const [isFetchingCatastroInfo, setIsFetchingCatastroInfo] = useState<boolean>(false);
-  const [showApiWarning, setShowApiWarning] = useState<boolean>(true); // Keep general warning
+  const [showApiWarning, setShowApiWarning] = useState<boolean>(true);
 
   const [utmCoordinatesForDisplay, setUtmCoordinatesForDisplay] = useState<{x: number, y: number, srs: string} | null>(null);
 
@@ -28,76 +28,62 @@ const App: React.FC = () => {
 
     let utmX: number;
     let utmY: number;
-    const srs = "EPSG:25830";
+    const srs = "EPSG:25830"; // Example SRS, should match what the API expects if not transformed
     
+    // Using example UTM coordinates as transformation from WGS84 is not implemented
     utmX = 123456; 
     utmY = 4567890; 
     setUtmCoordinatesForDisplay({ x: utmX, y: utmY, srs: srs });
     console.warn(`ADVERTENCIA: Usando coordenadas UTM de ejemplo (X: ${utmX}, Y: ${utmY}, SRS: ${srs}). La transformación de coordenadas WGS84 a UTM EPSG:25830 no está implementada.`);
     
-    const proxyApiUrl = `/api/catastro-proxy`; // URL for the Vercel proxy
+    const proxyApiUrl = `/api/catastro-proxy`;
     
     try {
       const response = await fetch(proxyApiUrl, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json', // Sending JSON to our proxy
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ utmX, utmY, srs }), // Send UTM coords as JSON
+        body: JSON.stringify({ utmX, utmY, srs }),
       });
       
-      const responseText = await response.text(); 
+      // Expecting JSON response from our proxy (which gets JSON from WCF service)
+      const jsonData = await response.json();
 
       if (!response.ok) {
-        let errorDetails = responseText;
-        try {
-            // If proxy returns JSON error, parse it
-            if (response.headers.get('content-type')?.includes('application/json')) {
-                const jsonError = JSON.parse(responseText);
-                // Prioritize 'details' (from our proxy's 500 error structure),
-                // then 'error', then 'message', then the raw text.
-                errorDetails = jsonError.details || jsonError.error || jsonError.message || responseText;
-            }
-        } catch (parseError) {
-            // Ignore if not JSON, errorDetails remains responseText
-        }
-        console.error("Error desde el proxy o Catastro:", response.status, response.statusText, errorDetails);
+        // Error details should be in jsonData.details or jsonData.error from our proxy
+        const errorDetails = jsonData.details || jsonData.error || JSON.stringify(jsonData);
+        console.error("Error desde el proxy o Catastro (JSON):", response.status, errorDetails);
         setCatastroError(`Error al contactar el servicio (status: ${response.status}). Detalles: ${errorDetails}. Endpoint: ${proxyApiUrl}`);
         setIsFetchingCatastroInfo(false);
         return;
       }
 
-      // XML parsing logic remains the same, as proxy forwards XML from Catastro
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(responseText, "application/xml");
-      
-      const faultStringNode = xmlDoc.querySelector("faultstring, Fault > Reason > Text, :scope > faultstring, :scope > Fault > Reason > Text, soap\\:Fault > faultstring, soap\\:Fault > soap\\:Reason > soap\\:Text");
+      // Process the JSON data
+      const result = jsonData.Consulta_RCCOORResult;
 
-      if (faultStringNode) {
-        const errorDesc = faultStringNode.textContent;
-        console.warn("Error SOAP desde la API del Catastro (via proxy):", errorDesc);
-        setCatastroError(`Catastro (SOAP Fault): ${errorDesc}`);
+      if (!result) {
+        setCatastroError("No se encontró 'Consulta_RCCOORResult' en la respuesta JSON. La estructura puede haber cambiado.");
+        console.log("JSON completo (para depuración de estructura):", JSON.stringify(jsonData, null, 2));
         setIsFetchingCatastroInfo(false);
         return;
       }
       
-      const resultNode = xmlDoc.querySelector("Consulta_RCCOORResult"); // Updated to target Consulta_RCCOORResult
-
-      if (!resultNode) {
-        setCatastroError("No se pudo encontrar 'Consulta_RCCOORResult' en la respuesta XML. La estructura puede haber cambiado o la operación falló sin un SOAP fault claro."); // Updated error message
-        console.log("Respuesta XML completa (para depuración de estructura):", responseText);
-        setIsFetchingCatastroInfo(false);
-        return;
-      }
-
-      const errorCodNode = resultNode.querySelector("control > cuerr > cod"); 
-      const errorDesNode = resultNode.querySelector("control > cuerr > des");
-
-      if (errorCodNode && errorCodNode.textContent !== "0") {
-        const errorCode = errorCodNode.textContent;
-        const errorDesc = errorDesNode?.textContent || "Error desconocido del Catastro";
-        console.warn("Error funcional desde la API del Catastro (via proxy):", errorCode, errorDesc);
-        setCatastroError(`Catastro: ${errorDesc} (Código: ${errorCode})`);
+      // Check for functional errors from Catastro within the JSON structure
+      // Example: result.control.cuerr should be 0 for success
+      // The exact structure for cuerr and des might be nested, e.g., result.control.cuerr or result.control.lerr.err[0].des
+      // Based on the example `{"control": { "cucoor": 1, "cuerr": 0 }}`
+      const control = result.control;
+      if (control && typeof control.cuerr === 'number' && control.cuerr !== 0) {
+        // Attempt to find a descriptive error message
+        let errorDesc = "Error desconocido del Catastro";
+        if (result.lerr && Array.isArray(result.lerr.err) && result.lerr.err.length > 0 && result.lerr.err[0].des) {
+            errorDesc = result.lerr.err[0].des;
+        } else if (control.des) { // Some services might put 'des' directly in control
+            errorDesc = control.des;
+        }
+        console.warn("Error funcional desde la API del Catastro (JSON):", control.cuerr, errorDesc);
+        setCatastroError(`Catastro: ${errorDesc} (Código: ${control.cuerr})`);
         setIsFetchingCatastroInfo(false);
         return;
       }
@@ -105,67 +91,44 @@ const App: React.FC = () => {
       let referenciaCatastral: string | null = null;
       let direccion: string | null = null;
 
-      // The structure inside consulta_coordenadas (aliased as Consulta_RCCOORResult) is the same
-      const coorNode = resultNode.querySelector("coordenadas > coord"); // Adjusted path to coor based on consulta_coordenadas structure
-      if (coorNode) {
-        const pc1Node = coorNode.querySelector("pc > pc1");
-        const pc2Node = coorNode.querySelector("pc > pc2");
-        if (pc1Node?.textContent && pc2Node?.textContent) {
-            referenciaCatastral = `${pc1Node.textContent}${pc2Node.textContent}`;
+      // Extract data from the 'coordenadas' object
+      // The WCF JSON example shows `{"coordenadas": { /* ... */ }}`
+      // And inside that, `coord` could be an object or an array if multiple results are possible
+      const coordData = result.coordenadas?.coord;
+      
+      if (coordData) {
+        // If coordData is an array, take the first element, otherwise use it directly
+        const actualCoord = Array.isArray(coordData) ? coordData[0] : coordData;
+
+        if (actualCoord?.pc?.pc1 && actualCoord?.pc?.pc2) {
+            referenciaCatastral = `${actualCoord.pc.pc1}${actualCoord.pc.pc2}`;
         }
 
-        const dtNode = coorNode.querySelector("ldt"); // dt is not directly under coor, ldt contains the address string
-        if (dtNode?.textContent) {
-            direccion = dtNode.textContent.trim(); // ldt often contains the full formatted address
-        } else {
-            // Fallback to individual components if ldt is not present or empty (less likely based on WSDL structure of ldt)
-            const ldtComponentsNode = coorNode.querySelector("dt");
-            if (ldtComponentsNode) {
-                const tv = ldtComponentsNode.querySelector("tv")?.textContent || ""; 
-                const nv = ldtComponentsNode.querySelector("nv")?.textContent || ""; 
-                const pnp = ldtComponentsNode.querySelector("pnp")?.textContent || ""; 
-                const snp = ldtComponentsNode.querySelector("snp")?.textContent || ""; 
-                const km = ldtComponentsNode.querySelector("km")?.textContent || ""; 
-                
-                const bq = ldtComponentsNode.querySelector("bq")?.textContent || ""; 
-                const es = ldtComponentsNode.querySelector("es")?.textContent || ""; 
-                const pt = ldtComponentsNode.querySelector("pt")?.textContent || ""; 
-                const pu = ldtComponentsNode.querySelector("pu")?.textContent || "";
-
-                const loc = ldtComponentsNode.querySelector("loc")?.textContent || ""; 
-                const cp = ldtComponentsNode.querySelector("cp")?.textContent || ""; 
-
-                let dirParts = [];
-                if (tv && nv) dirParts.push(`${tv} ${nv}`);
-                if (pnp) dirParts.push(`Nº ${pnp}${snp ? ' ' + snp : ''}`);
-                if (km) dirParts.push(`Km ${km}`);
-                if (bq) dirParts.push(`Bl. ${bq}`);
-                if (es) dirParts.push(`Esc. ${es}`);
-                if (pt) dirParts.push(`Pl. ${pt}`);
-                if (pu) dirParts.push(`Pta. ${pu}`);
-                if (cp && loc) dirParts.push(`${cp} ${loc}`);
-                else if (loc) dirParts.push(loc);
-                
-                if (dirParts.length > 0) {
-                    direccion = dirParts.join(', ');
-                }
-            }
+        if (actualCoord?.ldt) { // ldt usually contains the full formatted address
+            direccion = actualCoord.ldt.trim();
         }
+        // Add more specific address component extraction if needed from actualCoord.dt or similar,
+        // if ldt is not sufficient or always present.
       }
-
 
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-        if (!(errorCodNode && errorCodNode.textContent !== "0")) { // Only if no functional error was already set
-            setCatastroError("No se encontró información catastral específica (referencia o dirección) o la respuesta no pudo ser parseada.");
-            console.log("Respuesta XML del Catastro (vía proxy, para depuración):", responseText);
+         // Only set error if no functional error was already caught
+        if (!(control && typeof control.cuerr === 'number' && control.cuerr !== 0)) {
+            setCatastroError("No se encontró información catastral específica (referencia o dirección) en la respuesta JSON.");
+            console.log("JSON del Catastro (vía proxy, para depuración):", JSON.stringify(jsonData, null, 2));
         }
       }
 
     } catch (e: any) {
-      console.error("Error al procesar la solicitud al proxy del Catastro:", e);
-      setCatastroError(`Error al procesar la solicitud al proxy: ${e.message}`);
+      console.error("Error al procesar la solicitud al proxy del Catastro (JSON):", e);
+      // Check if 'e' is from response.json() failing due to non-JSON response
+      if (e instanceof SyntaxError && e.message.toLowerCase().includes('json')) {
+        setCatastroError(`Error: La respuesta del proxy no fue JSON válido. ${e.message}`);
+      } else {
+        setCatastroError(`Error al procesar la solicitud al proxy: ${e.message}`);
+      }
     } finally {
       setIsFetchingCatastroInfo(false);
     }
@@ -384,4 +347,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-

@@ -18,30 +18,41 @@ export default async function handler(
     return;
   }
 
-  // Construct the GET URL for Catastro service
-  // Note: Parameter names are Coordenada_X, Coordenada_Y, SRS as per Catastro's GET interface
-  const catastroServiceUrl = new URL(`https://ovc.catastro.meh.es/ovcservweb/ovcswlocalizacionrc/ovccoordenadas.asmx/Consulta_RCCOOR`);
-  catastroServiceUrl.searchParams.append('SRS', srs);
-  catastroServiceUrl.searchParams.append('Coordenada_X', String(utmX));
-  catastroServiceUrl.searchParams.append('Coordenada_Y', String(utmY));
+  // Construct the GET URL for the WCF JSON Catastro service
+  // Endpoint: .../COVCCoordenadas.svc/json/Consulta_RCCOOR
+  // Query params: CoorX, CoorY, SRS
+  const catastroServiceUrl = new URL(`https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR`);
+  catastroServiceUrl.searchParams.append('SRS', encodeURIComponent(srs)); // Ensure SRS is URL encoded if it contains special chars
+  catastroServiceUrl.searchParams.append('CoorX', String(utmX));
+  catastroServiceUrl.searchParams.append('CoorY', String(utmY));
 
   try {
     const catastroResponse = await fetch(catastroServiceUrl.toString(), {
       method: 'GET',
       headers: {
-        // No SOAPAction needed for GET
-        // 'Accept': 'application/xml' // Optional, but good practice
+        'Accept': 'application/json', // Explicitly request JSON
       },
     });
 
-    const responseText = await catastroResponse.text();
-
-    // Forward Catastro's response (status, content-type, body)
-    res.setHeader('Content-Type', catastroResponse.headers.get('Content-Type') || 'application/xml;charset=UTF-8'); // Default to XML
-    res.status(catastroResponse.status).send(responseText);
+    // Check if the response from Catastro is JSON
+    const contentType = catastroResponse.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const jsonData = await catastroResponse.json();
+      // Forward Catastro's JSON response
+      res.setHeader('Content-Type', 'application/json;charset=UTF-8');
+      res.status(catastroResponse.status).json(jsonData);
+    } else {
+      // If not JSON, it might be an error or unexpected response format
+      const responseText = await catastroResponse.text();
+      console.error("Catastro service did not return JSON. Status:", catastroResponse.status, "Body:", responseText);
+      res.status(catastroResponse.status || 500).json({ 
+        error: 'Catastro service did not return JSON.', 
+        details: `Status: ${catastroResponse.status}. Response: ${responseText.substring(0, 500)}...` 
+      });
+    }
 
   } catch (error: any) {
-    console.error("Proxy error connecting to Catastro API (GET request):", error);
+    console.error("Proxy error connecting to Catastro API (WCF JSON GET request):", error);
     
     let details = error.message;
     if (error.cause) {
@@ -62,9 +73,8 @@ export default async function handler(
     }
 
     res.status(500).json({ 
-        error: 'Internal Server Error in proxy while contacting Catastro API via GET.', 
+        error: 'Internal Server Error in proxy while contacting Catastro API (WCF JSON).', 
         details: details 
     });
   }
 }
-
