@@ -1,0 +1,39 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main # Asegúrate que 'main' es tu rama principal. Cámbialo si usas otra (ej. 'master').
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Necesario para que la action pueda hacer push a la rama gh-pages
+
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4 # Acción para clonar tu repositorio
+
+      - name: Setup Node.js ⚙️
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Especifica una versión LTS de Node.js
+          cache: 'npm'         # Habilita el caching para las dependencias de npm
+
+      - name: Install dependencies 📦
+        run: npm install       # Instala las dependencias de tu proyecto
+
+      - name: Build application 🏗️
+        run: npm run build     # Ejecuta el script 'build' de tu package.json (que es 'vite build')
+                               # Esto creará la carpeta 'dist'
+
+      - name: Deploy to GitHub Pages 🚀
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }} # Token proporcionado por GitHub Actions
+          publish_dir: ./dist                     # La carpeta que se desplegará (resultado de 'vite build')
+          # publish_branch: gh-pages # Rama a la que se desplegará (por defecto es gh-pages)
+          # user_name: 'github-actions[bot]' # Nombre del committer (opcional)
+          # user_email: 'github-actions[bot]@users.noreply.github.com' # Email del committer (opcional)
+          # commit_message: 'Deploy to GitHub Pages' # Mensaje del commit (opcional)
