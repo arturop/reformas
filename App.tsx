@@ -18,10 +18,8 @@ const App: React.FC = () => {
     if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       setIsNonSecureContext(true);
     }
-    if (window.location.protocol === 'https:') {
-      // Mantenemos la advertencia general sobre API externa, ya que CORS sigue siendo una posibilidad.
-      setShowApiWarning(true);
-    }
+    // Mostrar siempre la advertencia general sobre API externa al cargar la página.
+    setShowApiWarning(true); 
   }, []);
 
   const fetchCatastroInfo = async (geoCoords: GeolocationCoordinates | null) => {
@@ -35,13 +33,14 @@ const App: React.FC = () => {
     const srs = "EPSG:25830";
     
     // --- INICIO SECCIÓN DE TRANSFORMACIÓN DE COORDENADAS (PENDIENTE) ---
-    // TODO: Implementar la transformación de WGS84 (geoCoords.latitude, geoCoords.longitude) a UTM EPSG:25830 (x, y)
-    // Por ahora, SIEMPRE usamos valores de ejemplo para probar la estructura de la API.
-    // Esto significa que la ubicación real del usuario NO se está utilizando para la consulta al Catastro.
+    // La API del Catastro (Consulta_CPMRC) espera coordenadas en formato UTM (e.g., EPSG:25830).
+    // La geolocalización del navegador proporciona Latitud/Longitud (WGS84).
+    // TODO: Implementar la transformación de WGS84 a UTM EPSG:25830.
+    // Por ahora, SIEMPRE usamos valores de ejemplo.
     utmX = 123456; // Ejemplo X UTM EPSG:25830
     utmY = 4567890; // Ejemplo Y UTM EPSG:25830
     setUtmCoordinatesForDisplay({ x: utmX, y: utmY, srs: srs });
-    console.warn(`ADVERTENCIA: Usando coordenadas UTM de ejemplo (X: ${utmX}, Y: ${utmY}, SRS: ${srs}). La transformación de coordenadas reales no está implementada.`);
+    console.warn(`ADVERTENCIA: Usando coordenadas UTM de ejemplo (X: ${utmX}, Y: ${utmY}, SRS: ${srs}). La transformación de coordenadas WGS84 a UTM EPSG:25830 no está implementada.`);
     // --- FIN SECCIÓN DE TRANSFORMACIÓN DE COORDENADAS ---
 
     const soapRequestBody = `
@@ -66,14 +65,14 @@ const App: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'text/xml;charset=UTF-8',
-          'SOAPAction': 'http://catastro.meh.es/Consulta_CPMRC' // A menudo requerido por servicios SOAP .asmx
+          'SOAPAction': 'http://catastro.meh.es/Consulta_CPMRC' 
         },
         body: soapRequestBody,
       });
       
       if (!response.ok) {
         console.error("Error en la respuesta de la red o CORS:", response.status, response.statusText, await response.text());
-        setCatastroError(`Error al contactar el servicio del Catastro (status: ${response.status}). Esto puede deberse a restricciones de CORS, problemas de red, una solicitud SOAP mal formada o que el servicio requiera una acción SOAP específica. Endpoint: ${catastroApiUrl}`);
+        setCatastroError(`Error al contactar el servicio del Catastro (status: ${response.status}). Compruebe la consola del navegador para detalles. Esto puede deberse a restricciones de CORS, problemas de red, una solicitud SOAP mal formada o que el servicio requiera una acción SOAP específica. Endpoint: ${catastroApiUrl}`);
         setIsFetchingCatastroInfo(false);
         return;
       }
@@ -82,9 +81,7 @@ const App: React.FC = () => {
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, "application/xml");
       
-      // console.log("Respuesta XML del Catastro:", xmlText); // Para depuración
-
-      const faultStringNode = xmlDoc.querySelector("faultstring, Fault > Reason > Text"); // SOAP 1.1 y SOAP 1.2
+      const faultStringNode = xmlDoc.querySelector("faultstring, Fault > Reason > Text");
       if (faultStringNode) {
         const errorDesc = faultStringNode.textContent;
         console.warn("Error SOAP desde la API del Catastro:", errorDesc);
@@ -93,10 +90,7 @@ const App: React.FC = () => {
         return;
       }
       
-      // Intentar encontrar el nodo resultado. Los namespaces pueden complicar esto.
-      // <Consulta_CPMRCResponse xmlns="http://catastro.meh.es/"> <Consulta_CPMRCResult>...</Consulta_CPMRCResult> </Consulta_CPMRCResponse>
-      // A menudo, el contenido útil no tiene prefijo dentro del nodo resultado si este define un xmlns.
-      const resultNode = xmlDoc.querySelector("Consulta_CPMRCResult"); // Busca sin namespace primero
+      const resultNode = xmlDoc.querySelector("Consulta_CPMRCResult"); 
 
       if (!resultNode) {
         setCatastroError("No se pudo encontrar el nodo 'Consulta_CPMRCResult' en la respuesta XML. La estructura de la respuesta puede haber cambiado o ser inesperada.");
@@ -120,7 +114,7 @@ const App: React.FC = () => {
       let referenciaCatastral: string | null = null;
       let direccion: string | null = null;
 
-      const coorNode = resultNode.querySelector("coor"); // Nodo principal con datos de coordenadas y parcela
+      const coorNode = resultNode.querySelector("coor"); 
       if (coorNode) {
         const pc1Node = coorNode.querySelector("pc > pc1");
         const pc2Node = coorNode.querySelector("pc > pc2");
@@ -128,21 +122,21 @@ const App: React.FC = () => {
             referenciaCatastral = `${pc1Node.textContent}${pc2Node.textContent}`;
         }
 
-        const dtNode = coorNode.querySelector("dt"); // Datos territoriales (dirección)
+        const dtNode = coorNode.querySelector("dt"); 
         if (dtNode) {
-            const tv = dtNode.querySelector("tv")?.textContent || ""; // Tipo vía
-            const nv = dtNode.querySelector("nv")?.textContent || ""; // Nombre vía
-            const pnp = dtNode.querySelector("pnp")?.textContent || ""; // Primer número policía
-            const snp = dtNode.querySelector("snp")?.textContent || ""; // Segundo número policía (e.g. BIS)
-            const km = dtNode.querySelector("km")?.textContent || ""; // Kilómetro
+            const tv = dtNode.querySelector("tv")?.textContent || ""; 
+            const nv = dtNode.querySelector("nv")?.textContent || ""; 
+            const pnp = dtNode.querySelector("pnp")?.textContent || ""; 
+            const snp = dtNode.querySelector("snp")?.textContent || ""; 
+            const km = dtNode.querySelector("km")?.textContent || ""; 
             
-            const bq = dtNode.querySelector("bq")?.textContent || ""; // Bloque
-            const es = dtNode.querySelector("es")?.textContent || ""; // Escalera
-            const pt = dtNode.querySelector("pt")?.textContent || ""; // Planta
-            const pu = dtNode.querySelector("pu")?.textContent || ""; // Puerta
+            const bq = dtNode.querySelector("bq")?.textContent || ""; 
+            const es = dtNode.querySelector("es")?.textContent || ""; 
+            const pt = dtNode.querySelector("pt")?.textContent || ""; 
+            const pu = dtNode.querySelector("pu")?.textContent || "";
 
-            const loc = dtNode.querySelector("loc")?.textContent || ""; // Localización (municipio)
-            const cp = dtNode.querySelector("cp")?.textContent || ""; // Código Postal (a veces presente)
+            const loc = dtNode.querySelector("loc")?.textContent || ""; 
+            const cp = dtNode.querySelector("cp")?.textContent || ""; 
 
             let dirParts = [];
             if (tv && nv) dirParts.push(`${tv} ${nv}`);
@@ -165,7 +159,6 @@ const App: React.FC = () => {
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-        // Si después de todos los intentos no se encuentra nada, y no hubo error de API previo
         if (!(errorCodNode && errorCodNode.textContent !== "0")) {
             setCatastroError("No se encontró información catastral específica (referencia o dirección) para las coordenadas o la respuesta no pudo ser parseada. Verifique la consola para la respuesta XML completa.");
             console.log("Respuesta XML del Catastro (para depuración):", xmlText);
@@ -176,7 +169,7 @@ const App: React.FC = () => {
       console.error("Error al obtener información del Catastro:", e);
       let detailedError = e.message;
       if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
-          detailedError = "Fallo al realizar la solicitud. Esto podría deberse a un problema de red, un bloqueo de CORS por parte del navegador, o que el endpoint no esté disponible.";
+          detailedError = "Fallo al realizar la solicitud. Esto podría deberse a un problema de red, un bloqueo de CORS por parte del navegador (muy común con APIs externas), o que el endpoint no esté disponible.";
       }
       setCatastroError(`Error al procesar la solicitud al Catastro: ${detailedError}`);
     } finally {
@@ -196,13 +189,13 @@ const App: React.FC = () => {
     setCoordinates(null);
     setCatastroInfo(null);
     setCatastroError(null);
-    setUtmCoordinatesForDisplay(null); // Limpiar advertencia de UTM de ejemplo
+    setUtmCoordinatesForDisplay(null);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
         setCoordinates(position.coords);
         setIsLoadingLocation(false);
-        fetchCatastroInfo(position.coords); // Pasar las coordenadas geográficas
+        fetchCatastroInfo(position.coords); 
       },
       (err) => {
         let errorMessage = "Ocurrió un error al obtener la ubicación.";
@@ -226,7 +219,7 @@ const App: React.FC = () => {
         maximumAge: 0
       }
     );
-  }, []); // fetchCatastroInfo no necesita estar en dependencias si no usa estado que cambie fuera de su scope directo
+  }, []); 
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-600 to-indigo-700 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans antialiased">
@@ -252,7 +245,7 @@ const App: React.FC = () => {
                 <h3 className="font-semibold text-lg">Atención (Contexto HTTP):</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                Estás accediendo a esta aplicación mediante HTTP. Para una detección de ubicación más fiable, se recomienda usar HTTPS. 
+                Estás accediendo a esta aplicación mediante HTTP. Para una detección de ubicación más fiable y segura, se recomienda usar HTTPS. 
                 Algunos navegadores podrían restringir la geolocalización en contextos no seguros.
               </p>
             </div>
@@ -264,11 +257,18 @@ const App: React.FC = () => {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2" aria-hidden="true">
                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                 </svg>
-                <h3 className="font-semibold text-lg">Advertencia sobre API Externa:</h3>
+                <h3 className="font-semibold text-lg">Sobre la API del Catastro:</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                Esta aplicación se conecta a un servicio externo del Catastro. Si la información catastral no aparece, podría deberse a
-                restricciones de red (CORS), problemas temporales con el servicio del Catastro, o que las coordenadas de ejemplo no devuelvan datos.
+                Esta aplicación intenta conectarse a un servicio SOAP externo del Catastro. La obtención de datos puede fallar debido a:
+              </p>
+              <ul className="list-disc list-inside mt-1 ml-8 text-sm sm:text-base">
+                <li><strong>Restricciones de CORS:</strong> El navegador puede bloquear la solicitud si el servidor del Catastro no lo permite para este dominio.</li>
+                <li><strong>Problemas de red o del servicio:</strong> El servicio del Catastro podría estar temporalmente inaccesible.</li>
+                <li><strong>Coordenadas:</strong> El servicio actual espera coordenadas UTM (EPSG:25830). La conversión desde Lat/Lon está pendiente (ver nota abajo).</li>
+              </ul>
+              <p className="mt-2 ml-8 text-sm sm:text-base">
+                 Para una integración robusta, usualmente se requiere un backend propio (proxy) que maneje estas complejidades.
               </p>
             </div>
           )}
@@ -279,12 +279,12 @@ const App: React.FC = () => {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                 </svg>
-                <h3 className="font-semibold text-lg">Nota Importante (Desarrollo):</h3>
+                <h3 className="font-semibold text-lg">Nota Importante (Coordenadas):</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                Actualmente, la consulta al Catastro utiliza <strong>coordenadas UTM de ejemplo</strong> (X: {utmCoordinatesForDisplay.x}, Y: {utmCoordinatesForDisplay.y}, SRS: {utmCoordinatesForDisplay.srs})
-                en lugar de tu ubicación real. La transformación de coordenadas Lat/Lon a UTM EPSG:25830 está pendiente.
-                Los resultados mostrados corresponden a estas coordenadas de prueba.
+                La consulta al Catastro (vía servicio SOAP `Consulta_CPMRC`) utiliza <strong>coordenadas UTM de ejemplo</strong> (X: {utmCoordinatesForDisplay.x}, Y: {utmCoordinatesForDisplay.y}, SRS: {utmCoordinatesForDisplay.srs})
+                en lugar de tu ubicación real (Lat/Lon). La transformación de coordenadas geográficas (WGS84) a UTM (EPSG:25830) es un paso técnico pendiente.
+                Los resultados mostrados corresponden a estas coordenadas de prueba. Otros servicios del Catastro (ej. WMS) podrían usarse para obtener referencias catastrales desde Lat/Lon, pero también presentan desafíos de integración.
               </p>
             </div>
           )}
@@ -386,7 +386,7 @@ const App: React.FC = () => {
       </div>
       <footer className="mt-8 text-center text-indigo-300 text-xs sm:text-sm">
         <p>&copy; {new Date().getFullYear()} Consulta Catastral Geo. Datos proporcionados por la Dirección General del Catastro.</p>
-        <p className="mt-1">La transformación de coordenadas geográficas a UTM es un paso pendiente.</p>
+        <p className="mt-1">Esta aplicación es una demostración y enfrenta desafíos como la conversión de coordenadas (Lat/Lon a UTM) y posibles restricciones CORS al acceder a servicios externos. Catastro ofrece diversos servicios (SOAP, WMS, etc.) cuya integración directa desde el navegador puede ser compleja.</p>
       </footer>
     </div>
   );
