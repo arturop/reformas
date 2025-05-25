@@ -1,5 +1,7 @@
 {
-  "name": "Reformas",
-  "description": "Una aplicación sencilla para obtener y mostrar tus coordenadas geográficas (latitud y longitud) después de solicitar permiso.",
-  "requestFramePermissions": []
+  "name": "reformas",
+  "description": "Una aplicación para obtener información catastral (referencia y dirección) de tu ubicación actual utilizando el servicio web del Catastro de España.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }

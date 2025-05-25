@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GeoInfo AI - Ubicación y Propiedad</title>
+  <title>GeoCatastro - Consulta Catastral</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌍</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗺️</text></svg>">
   <link rel="stylesheet" href="index.css">
 <script type="importmap">
 {
@@ -34,8 +34,12 @@
     IMPORTANTE: El siguiente script carga tu aplicación directamente desde GitHub vía esm.sh.
     esm.sh transpilará tu index.tsx (y sus dependencias) a JavaScript.
     Asegúrate de que 'arturop/reformas@main' apunte a tu repositorio y rama correctos.
+    Esta configuración es para cuando NO usas un proceso de build local para GitHub Pages.
+    Si usas 'npm run build' y despliegas la carpeta 'dist', este script y el importmap
+    son manejados de forma diferente por Vite y el HTML de 'dist' será el que se use.
   -->
   <script type="module" src="https://esm.sh/gh/arturop/reformas@main/index.tsx"></script>
 </body>
 </html>
-
+<link rel="stylesheet" href="index.css">
+<script src="index.tsx" type="module"></script>

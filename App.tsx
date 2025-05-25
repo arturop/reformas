@@ -1,12 +1,5 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
-
-// Asumimos que process.env.API_KEY está disponible en el entorno de ejecución.
-// ADVERTENCIA: Esto NO funcionará de forma segura en un despliegue de frontend puro en GitHub Pages
-// sin un backend proxy o un proceso de compilación que lo maneje adecuadamente (y de forma segura).
-// La API Key quedaría expuesta si se inyecta directamente en el cliente.
-const API_KEY = process.env.API_KEY;
 
 const App: React.FC = () => {
   const [coordinates, setCoordinates] = useState<GeolocationCoordinates | null>(null);
@@ -14,16 +7,10 @@ const App: React.FC = () => {
   const [isLoadingLocation, setIsLoadingLocation] = useState<boolean>(false);
   const [isNonSecureContext, setIsNonSecureContext] = useState<boolean>(false);
 
-  const [propertyInfo, setPropertyInfo] = useState<string | null>(null);
-  const [propertyInfoError, setPropertyInfoError] = useState<string | null>(null);
-  const [isFetchingPropertyInfo, setIsFetchingPropertyInfo] = useState<boolean>(false);
-
-  let ai: GoogleGenAI | null = null;
-  if (API_KEY) {
-    ai = new GoogleGenAI({ apiKey: API_KEY });
-  } else {
-    console.warn("API_KEY de Gemini no está configurada. La funcionalidad de información de propiedad estará deshabilitada.");
-  }
+  const [catastroInfo, setCatastroInfo] = useState<{ referencia: string | null; direccion: string | null } | null>(null);
+  const [catastroError, setCatastroError] = useState<string | null>(null);
+  const [isFetchingCatastroInfo, setIsFetchingCatastroInfo] = useState<boolean>(false);
+  const [showMixedContentWarning, setShowMixedContentWarning] = useState<boolean>(false);
 
   useEffect(() => {
     if (
@@ -31,41 +18,77 @@ const App: React.FC = () => {
       window.location.hostname !== 'localhost' &&
       window.location.hostname !== '127.0.0.1'
     ) {
-      setIsNonSecureContext(true);
+      setIsNonSecureContext(true); // HTTP context, geolocation might be an issue but not mixed content for API
+    } else if (window.location.protocol === 'https:') {
+      // HTTPS context, potential mixed content if Catastro API is HTTP
+      setShowMixedContentWarning(true);
     }
   }, []);
 
-  const fetchPropertyInfoFromGemini = async (coords: GeolocationCoordinates) => {
-    if (!ai) {
-      setPropertyInfoError("La API de Gemini no está configurada (falta API_KEY).");
-      setIsFetchingPropertyInfo(false);
-      return;
-    }
+  const fetchCatastroInfo = async (coords: GeolocationCoordinates) => {
+    setIsFetchingCatastroInfo(true);
+    setCatastroInfo(null);
+    setCatastroError(null);
 
-    setIsFetchingPropertyInfo(true);
-    setPropertyInfo(null);
-    setPropertyInfoError(null);
-
-    const prompt = `Eres un asistente experto en información inmobiliaria y de áreas locales.
-    Basándote en las siguientes coordenadas: Latitud ${coords.latitude}, Longitud ${coords.longitude}.
-    Proporciona una descripción concisa del tipo de propiedad o terreno que probablemente se encuentre allí.
-    Incluye cualquier punto de interés cercano notable, usos potenciales y el carácter general estimado del área.
-    Si es un edificio, menciona su tipo potencial (residencial, comercial, industrial, etc.).
-    Si es un terreno baldío, describe sus características y posibles usos.
-    Sé descriptivo pero breve.`;
+    // Servicio de Consulta de datos catastrales por coordenadas de la Sede Electrónica del Catastro (España)
+    // Devuelve XML. Ejemplo: http://ovc.catastro.mineco.es/ovcservweb/OVCServWeb.asmx/Consulta_DNPLOC_Pol?SRS=EPSG:4326&Coordenada_X=[longitud]&Coordenada_Y=[latitud]
+    const catastroApiUrl = `https://ovc.catastro.mineco.es/ovcservweb/OVCServWeb.asmx/Consulta_DNPLOC_Pol?SRS=EPSG:4326&Coordenada_X=${coords.longitude}&Coordenada_Y=${coords.latitude}`;
+    
+    // Nota: Para evitar problemas de CORS y mixed content en producción, se necesitaría un backend proxy.
+    // Como alternativa, se puede usar un proxy CORS simple para desarrollo si es necesario, pero no es una solución de producción.
+    // const proxyUrl = 'https://cors-anywhere.herokuapp.com/'; // Ejemplo de proxy CORS, usar con precaución.
+    // const urlToFetch = proxyUrl + catastroApiUrl; // Descomentar para usar con proxy CORS
 
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-preview-04-17', // Modelo recomendado para tareas de texto generales
-        contents: [{ role: "user", parts: [{text: prompt}] }],
-      });
+      // Se usa directamente la URL del catastro. Si hay problemas de CORS o Mixed Content, esta llamada fallará.
+      const response = await fetch(catastroApiUrl); 
       
-      setPropertyInfo(response.text);
+      if (!response.ok) {
+        // Esto podría ser un error HTTP antes de llegar a la lógica de la API del Catastro
+        // o un error de CORS si el navegador lo bloquea.
+        console.error("Error en la respuesta de la red o CORS:", response.status, response.statusText);
+        setCatastroError(`Error de red o CORS al contactar el servicio del Catastro (status: ${response.status}). Asegúrate de que no haya bloqueos de CORS o contenido mixto si estás en HTTPS.`);
+        setIsFetchingCatastroInfo(false);
+        return;
+      }
+
+      const xmlText = await response.text();
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+
+      const errorNode = xmlDoc.querySelector("err");
+      if (errorNode) {
+        const errorCode = errorNode.querySelector("cod")?.textContent;
+        const errorDesc = errorNode.querySelector("des")?.textContent;
+        console.warn("Error desde la API del Catastro:", errorCode, errorDesc);
+        setCatastroError(`Catastro: ${errorDesc} (Código: ${errorCode})`);
+        setIsFetchingCatastroInfo(false);
+        return;
+      }
+      
+      const pc1Node = xmlDoc.querySelector("pc1"); // Referencia Catastral parte 1
+      const pc2Node = xmlDoc.querySelector("pc2"); // Referencia Catastral parte 2
+      const ldtNode = xmlDoc.querySelector("ldt"); // Localización / Dirección
+
+      const referenciaCatastral = pc1Node && pc2Node ? `${pc1Node.textContent}${pc2Node.textContent}` : null;
+      const direccion = ldtNode ? ldtNode.textContent : null;
+
+      if (referenciaCatastral || direccion) {
+        setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
+      } else {
+        setCatastroError("No se encontró información catastral para las coordenadas proporcionadas o la respuesta no pudo ser parseada.");
+      }
+
     } catch (e: any) {
-      console.error("Error al obtener información de propiedad de Gemini:", e);
-      setPropertyInfoError(`Error al contactar la API de Gemini: ${e.message}. Asegúrate de que la API Key es válida y tiene permisos.`);
+      console.error("Error al obtener información del Catastro:", e);
+      // Este error puede ser una falla de red, CORS, o un error en el parseo del XML.
+      let detailedError = e.message;
+      if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
+          detailedError = "Fallo al realizar la solicitud. Esto podría deberse a un problema de red, bloqueo de CORS por el navegador, o porque el servicio del Catastro no está accesible. Si estás en HTTPS, podría ser un problema de contenido mixto (HTTP API desde HTTPS).";
+      }
+      setCatastroError(`Error al procesar la solicitud al Catastro: ${detailedError}`);
     } finally {
-      setIsFetchingPropertyInfo(false);
+      setIsFetchingCatastroInfo(false);
     }
   };
 
@@ -79,18 +102,14 @@ const App: React.FC = () => {
     setIsLoadingLocation(true);
     setLocationError(null);
     setCoordinates(null);
-    setPropertyInfo(null);
-    setPropertyInfoError(null);
+    setCatastroInfo(null);
+    setCatastroError(null);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
         setCoordinates(position.coords);
         setIsLoadingLocation(false);
-        if (API_KEY) {
-          fetchPropertyInfoFromGemini(position.coords);
-        } else {
-           setPropertyInfoError("Funcionalidad no disponible: API Key de Gemini no configurada.");
-        }
+        fetchCatastroInfo(position.coords);
       },
       (err) => {
         let errorMessage = "Ocurrió un error al obtener la ubicación.";
@@ -114,7 +133,7 @@ const App: React.FC = () => {
         maximumAge: 0
       }
     );
-  }, [API_KEY]); // Añadimos API_KEY a las dependencias por si cambiara, aunque es improbable con process.env
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-600 to-indigo-700 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans antialiased">
@@ -126,8 +145,8 @@ const App: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
             </svg>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">GeoInfo AI</h1>
-          <p className="text-indigo-200 mt-2 text-sm sm:text-base">Tu ubicación e información de la propiedad con IA.</p>
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">Consulta Catastral Geo</h1>
+          <p className="text-indigo-200 mt-2 text-sm sm:text-base">Tu ubicación e información del Catastro.</p>
         </header>
 
         <main>
@@ -137,29 +156,40 @@ const App: React.FC = () => {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2">
                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                 </svg>
-                <h3 className="font-semibold text-lg">Atención:</h3>
+                <h3 className="font-semibold text-lg">Atención (Contexto HTTP):</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                Para una detección de ubicación fiable, esta aplicación debe usarse en un contexto seguro (HTTPS). 
-                Es posible que tu navegador no solicite permiso o bloquee la geolocalización en conexiones HTTP. 
-                Intenta acceder a la aplicación mediante HTTPS.
+                Estás accediendo a esta aplicación mediante HTTP. Para una detección de ubicación más fiable, se recomienda usar HTTPS. 
+                Algunos navegadores podrían restringir la geolocalización en contextos no seguros.
+              </p>
+            </div>
+          )}
+          
+          {showMixedContentWarning && (
+             <div role="alert" className="bg-orange-500 bg-opacity-90 text-orange-900 p-4 rounded-md mb-6 shadow-lg text-left">
+              <div className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2">
+                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <h3 className="font-semibold text-lg">Advertencia Importante:</h3>
+              </div>
+              <p className="mt-1 ml-8 text-sm sm:text-base">
+                Esta aplicación intenta conectarse al servicio del Catastro que opera sobre HTTP. Dado que estás accediendo a esta página mediante HTTPS,
+                tu navegador podría bloquear la solicitud al Catastro por seguridad (política de "contenido mixto"). 
+                Si la información catastral no aparece, esta podría ser la causa. Para una funcionalidad completa, se requeriría un backend proxy o que el servicio del Catastro use HTTPS.
               </p>
             </div>
           )}
 
+
           <button
             onClick={handleGetLocation}
-            disabled={isLoadingLocation || isFetchingPropertyInfo || !API_KEY}
+            disabled={isLoadingLocation || isFetchingCatastroInfo}
             className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 ease-in-out focus:outline-none focus:ring-4 focus:ring-indigo-300 focus:ring-opacity-50 mb-6 text-lg"
             aria-live="polite"
           >
-            {isLoadingLocation ? 'Obteniendo Ubicación...' : isFetchingPropertyInfo ? 'Analizando con IA...' : 'Obtener Ubicación e Info de Propiedad'}
+            {isLoadingLocation ? 'Obteniendo Ubicación...' : isFetchingCatastroInfo ? 'Consultando Catastro...' : 'Obtener Ubicación e Info Catastral'}
           </button>
-          {!API_KEY && (
-            <div role="alert" className="bg-red-700 bg-opacity-90 text-white p-3 rounded-md mb-4 shadow text-xs">
-              La funcionalidad de información de propiedad está deshabilitada. Falta la API Key de Gemini.
-            </div>
-          )}
 
           {locationError && (
             <div role="alert" className="bg-red-500 bg-opacity-90 text-white p-4 rounded-md mb-6 shadow-lg text-left">
@@ -195,47 +225,58 @@ const App: React.FC = () => {
             </div>
           )}
           
-          {isFetchingPropertyInfo && (
+          {isFetchingCatastroInfo && (
             <div className="flex items-center justify-center text-lg p-4 my-4 bg-blue-500 bg-opacity-80 rounded-md">
               <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Consultando a Gemini AI...
+              Consultando al Servicio del Catastro...
             </div>
           )}
 
-          {propertyInfoError && (
-             <div role="alert" className="bg-orange-500 bg-opacity-90 text-white p-4 rounded-md mb-6 shadow-lg text-left">
+          {catastroError && (
+             <div role="alert" className="bg-orange-600 bg-opacity-90 text-white p-4 rounded-md mb-6 shadow-lg text-left">
               <div className="flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mr-2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                 </svg>
-                <h3 className="font-semibold text-lg">Error de Información de Propiedad:</h3>
+                <h3 className="font-semibold text-lg">Error de Información Catastral:</h3>
               </div>
-              <p className="mt-1 ml-8 text-sm sm:text-base">{propertyInfoError}</p>
+              <p className="mt-1 ml-8 text-sm sm:text-base">{catastroError}</p>
             </div>
           )}
 
-          {propertyInfo && !propertyInfoError && (
-            <div className="bg-purple-500 bg-opacity-90 text-white p-4 sm:p-6 rounded-md shadow-lg space-y-2 sm:space-y-3 text-left">
-              <h2 className="text-xl sm:text-2xl font-semibold mb-2 sm:mb-3 text-center">Información de la Propiedad (por Gemini AI)</h2>
-              <div className="bg-purple-600 bg-opacity-50 p-3 rounded-md prose prose-sm sm:prose-base prose-invert max-w-none">
-                {/* Usamos whitespace-pre-wrap para respetar saltos de línea y espacios de la respuesta de Gemini */}
-                <p style={{ whiteSpace: 'pre-wrap' }}>{propertyInfo}</p>
-              </div>
+          {catastroInfo && !catastroError && (
+            <div className="bg-teal-500 bg-opacity-90 text-white p-4 sm:p-6 rounded-md shadow-lg space-y-3 sm:space-y-4 text-left">
+              <h2 className="text-xl sm:text-2xl font-semibold mb-2 sm:mb-3 text-center">Información del Catastro</h2>
+              {catastroInfo.referencia && (
+                <div className="bg-teal-600 bg-opacity-50 p-3 rounded-md">
+                  <p className="text-xs sm:text-sm text-teal-100">Referencia Catastral:</p>
+                  <p className="text-base sm:text-lg font-medium">{catastroInfo.referencia}</p>
+                </div>
+              )}
+              {catastroInfo.direccion && (
+                 <div className="bg-teal-600 bg-opacity-50 p-3 rounded-md">
+                  <p className="text-xs sm:text-sm text-teal-100">Localización / Dirección:</p>
+                  <p className="text-base sm:text-lg font-medium" style={{ whiteSpace: 'pre-wrap' }}>{catastroInfo.direccion}</p>
+                </div>
+              )}
+              {!catastroInfo.referencia && !catastroInfo.direccion && (
+                 <p className="text-base sm:text-lg text-center">No se pudo extraer información específica de referencia o dirección de la respuesta del Catastro.</p>
+              )}
             </div>
           )}
 
-          {!isLoadingLocation && !isFetchingPropertyInfo && !locationError && !coordinates && !isNonSecureContext && (
+          {!isLoadingLocation && !isFetchingCatastroInfo && !locationError && !coordinates && !isNonSecureContext && (
              <p className="text-indigo-200 text-sm sm:text-base mt-4">
-              {API_KEY ? "Haz clic en el botón para obtener tu ubicación e información de la propiedad." : "Configura la API Key de Gemini para activar la búsqueda de información."}
+              Haz clic en el botón para obtener tu ubicación e información del Catastro.
              </p>
           )}
         </main>
       </div>
       <footer className="mt-8 text-center text-indigo-300 text-xs sm:text-sm">
-        <p>&copy; {new Date().getFullYear()} GeoInfo AI. Potenciado por Gemini.</p>
+        <p>&copy; {new Date().getFullYear()} Consulta Catastral Geo. Datos proporcionados por la Dirección General del Catastro.</p>
       </footer>
     </div>
   );
