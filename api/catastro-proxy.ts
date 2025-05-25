@@ -21,16 +21,16 @@ async function fetchParcelDetailsAndRespond(
   distancia: number | null,
   contextMessage?: string // Optional message (e.g., from ring search)
 ): Promise<void> {
-  const baseDetalleUrl =
+  const baseDet =
     'https://ovc.catastro.meh.es/OVCServWeb/' +
     'OVCWcfCallejero/COVCCallejero.svc/json/Consulta_DNPRC';
-  const queryDetalle = '?RefCat=' + encodeURIComponent(refCat);
-  const detalleUrlString = baseDetalleUrl + queryDetalle;
+  const queryDet = '?RefCat=' + encodeURIComponent(refCat);
+  const detalleUrl = baseDet + queryDet;
 
-  console.log(`>>> CAT DETAILS URL (Manual): ${detalleUrlString}`);
+  console.log('▶︎ URL Detalle manual:', detalleUrl);
 
   try {
-    const detRes = await fetch(detalleUrlString, {
+    const detRes = await fetch(detalleUrl, { // Use the manually constructed string
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -67,28 +67,23 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
 
-    // Corrected parsing for direccionCompleta, usoPrincipal, superficie
-    let direccionCompleta = direccionLDT; // Fallback to LDT
+    let direccionCompleta = direccionLDT; 
     if (detResult?.dt?.loc?.dir) {
         const dir = detResult.dt.loc.dir;
         const parts = [
-            dir.tv, // Tipo de vía
-            dir.nv, // Nombre de la vía
-            dir.pnp ? `Nº ${dir.pnp}` : null, // Número de portal principal
-            dir.snp ? `Nº ${dir.snp}` : null, // Número de portal secundario (if any)
-            dir.bloque, // Bloque
-            dir.escalera, // Escalera
-            dir.planta, // Planta
-            dir.puerta, // Puerta
-            dir.dp ? `${dir.dp} ` : null, // Código Postal
-            dir.nm ? dir.nm : null, // Nombre del Municipio
-            dir.np ? `(${dir.np})` : null // Nombre de la Provincia
+            dir.tv, dir.nv,
+            dir.pnp ? `Nº ${dir.pnp}` : null,
+            dir.snp ? `Nº ${dir.snp}` : null,
+            dir.bloque, dir.escalera, dir.planta, dir.puerta,
+            dir.dp ? `${dir.dp} ` : null,
+            dir.nm ? dir.nm : null,
+            dir.np ? `(${dir.np})` : null
         ].filter(Boolean).join(' ').trim();
         if (parts) direccionCompleta = parts;
     }
     
     const bico = detResult?.bico;
-    const bi = bico && Array.isArray(bico.bi) ? bico.bi[0] : (bico?.bi || null); // Handle bico.bi as potential array or object
+    const bi = bico && Array.isArray(bico.bi) ? bico.bi[0] : (bico?.bi || null);
 
     const usoPrincipal = bi?.luso || null;
     const superficie = bi?.sfc ? String(bi.sfc) : null;
@@ -102,7 +97,7 @@ async function fetchParcelDetailsAndRespond(
         usoPrincipal: usoPrincipal,
         superficie: superficie,
       },
-      message: finalMessage || undefined, // Only include message if it's not empty
+      message: finalMessage || undefined, 
     } as CatastroInfoDataForProxy);
 
   } catch (detailsErr: any) {
@@ -111,7 +106,7 @@ async function fetchParcelDetailsAndRespond(
     const detailsFetchError = `Error crítico al procesar detalles para ${refCat}: ${detailsErr.message}`;
     finalMessage = finalMessage ? `${finalMessage}. ${detailsFetchError}` : detailsFetchError;
 
-    res.status(200).json({ // Return 200 with partial data and error message
+    res.status(200).json({ 
       referenciaOriginal: refCat,
       direccionOriginalLDT: direccionLDT,
       distancia,
@@ -126,9 +121,9 @@ async function buscarPorAnillos(
   originalUtmX: number,
   originalUtmY: number,
   srs: string
-): Promise<boolean> { // true if response sent, false otherwise
-  const radios = [5, 10, 25, 50, 100]; // meters
-  const angulos = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]; // N, E, S, W
+): Promise<boolean> { 
+  const radios = [5, 10, 25, 50, 100]; 
+  const angulos = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]; 
 
   console.log(`Iniciando búsqueda por anillos para ${originalUtmX}, ${originalUtmY}`);
 
@@ -139,43 +134,43 @@ async function buscarPorAnillos(
       const intentoX = originalUtmX + dx;
       const intentoY = originalUtmY + dy;
 
-      const baseRingUrl =
+      const baseDistAnillo =
         'https://ovc.catastro.meh.es/OVCServWeb/' +
         'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia';
-      const queryRing =
+      const queryDistAnillo =
         '?CoorX=' + encodeURIComponent(intentoX.toFixed(2)) +
         '&CoorY=' + encodeURIComponent(intentoY.toFixed(2)) +
         '&SRS=' + encodeURIComponent(srs);
-      const ringUrlString = baseRingUrl + queryRing;
+      const distanciaUrlAnillo = baseDistAnillo + queryDistAnillo;
       
-      console.log(`>>> CAT RING URL (Manual): ${ringUrlString}`);
+      console.log(`▶︎ URL Distancia Anillo manual (${r}m, ${theta.toFixed(2)}rad): ${distanciaUrlAnillo}`);
 
       try {
-        const rres = await fetch(ringUrlString, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        const rres = await fetch(distanciaUrlAnillo, { method: 'GET', headers: { 'Accept': 'application/json' } }); // Use manually constructed string
         
         const ringBodyText = await rres.text();
-        console.log(`>>> CAT RING STATUS (${r}m, ${theta}rad): ${rres.status}`);
-        console.log(`>>> CAT RING BODY (${r}m, ${theta}rad): ${ringBodyText}`);
+        console.log(`>>> CAT RING STATUS (${r}m, ${theta.toFixed(2)}rad): ${rres.status}`);
+        console.log(`>>> CAT RING BODY (${r}m, ${theta.toFixed(2)}rad): ${ringBodyText}`);
 
-        if (rres.status === 404) continue; // No luck here, try next point
+        if (rres.status === 404) continue; 
 
         if (!rres.ok) {
           console.warn(`Ring search: Consulta_RCCOOR_Distancia falló para ${intentoX.toFixed(2)},${intentoY.toFixed(2)} con status ${rres.status}`);
-          continue; // Try next point
+          continue; 
         }
 
-        const json = JSON.parse(ringBodyText); // Parse after logging
+        const json = JSON.parse(ringBodyText); 
         const result = json.Consulta_RCCOOR_DistanciaResult;
 
         if (result?.control?.cuerr === 0 && result?.coordenadas_distancias?.coordd) {
           const coorddRing = result.coordenadas_distancias.coordd;
           const firstParcelContainerRing = Array.isArray(coorddRing) ? coorddRing[0] : coorddRing;
 
-          const lpcdRingRaw = firstParcelContainerRing?.lpcd; // lpcd is the array/object of parcels
+          const lpcdRingRaw = firstParcelContainerRing?.lpcd; 
           if (lpcdRingRaw) { 
             const lpcdArrayRing = Array.isArray(lpcdRingRaw) ? lpcdRingRaw : [lpcdRingRaw];
             if (lpcdArrayRing.length > 0) {
-              const targetParcelRing = lpcdArrayRing[0]; // This is the actual parcel object
+              const targetParcelRing = lpcdArrayRing[0]; 
               if (targetParcelRing?.pc?.pc1 && targetParcelRing?.pc?.pc2) {
                 const refCatFromRing = `${targetParcelRing.pc.pc1}${targetParcelRing.pc.pc2}`;
                 const distanciaFromRing = targetParcelRing.dis ? Number(targetParcelRing.dis) : null;
@@ -191,23 +186,24 @@ async function buscarPorAnillos(
                   distanciaFromRing,
                   ringContextMessage
                 );
-                return true; // Found and response sent
+                return true; 
               }
             }
           }
         }
       } catch (fetchErr: any) {
         console.warn(`Ring search: Error en fetch/procesamiento para ${intentoX.toFixed(2)},${intentoY.toFixed(2)}: ${fetchErr.message}`);
-        // Continue to next attempt
       }
     }
   }
   console.log(`Búsqueda por anillos completada para ${originalUtmX}, ${originalUtmY}. Sin resultados.`);
-  return false; // Exhausted all attempts
+  return false; 
 }
 
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  console.log('► req.body:', JSON.stringify(req.body)); // Log incoming request body
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     res.status(405).json({ error: 'Method Not Allowed. Proxy expects POST from frontend.' });
@@ -221,20 +217,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const baseDistanciaUrl =
+  const baseDist =
     'https://ovc.catastro.meh.es/OVCServWeb/' +
     'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia';
-  const queryDistancia =
-    '?CoorX=' + encodeURIComponent(String(utmX)) +
-    '&CoorY=' + encodeURIComponent(String(utmY)) +
+  const queryDist =
+    '?CoorX=' + encodeURIComponent(utmX) + // utmX is a number, encodeURIComponent will stringify
+    '&CoorY=' + encodeURIComponent(utmY) + // utmY is a number, encodeURIComponent will stringify
     '&SRS=' + encodeURIComponent(srs);
-  const distanciaUrlString = baseDistanciaUrl + queryDistancia;
+  const distanciaUrl = baseDist + queryDist;
 
-
-  console.log(`>>> CAT DIST URL (Initial, Manual): ${distanciaUrlString}`);
+  console.log('▶︎ URL Distancia manual:', distanciaUrl);
 
   try {
-    const distRes = await fetch(distanciaUrlString, {
+    const distRes = await fetch(distanciaUrl, { // Use the manually constructed string
       method: 'GET',
       headers: { 'Accept': 'application/json' },
     });
@@ -255,9 +250,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       return; 
     }
-
-    // --- Process non-404 responses from initial Consulta_RCCOOR_Distancia ---
-    const distJson = JSON.parse(distBodyText); // Parse after logging
+    
+    const distJson = JSON.parse(distBodyText); 
     const distResult = distJson.Consulta_RCCOOR_DistanciaResult;
 
     if (!distRes.ok || (distResult?.control?.cuerr > 0)) {
@@ -269,7 +263,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             errorCode = errDetails.cod || errorCode;
         }
         console.error("Error from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
-        res.status(distRes.ok ? 500 : distRes.status).json({ // Keep original status if !ok, else 500 for functional error
+        res.status(distRes.ok ? 500 : distRes.status).json({ 
             error: 'Error al consultar parcelas cercanas (inicial).',
             details: `${errorMsg} (Código: ${errorCode})`
         });
@@ -287,8 +281,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const coordd = distResult.coordenadas_distancias.coordd;
     const firstParcelContainer = Array.isArray(coordd) ? coordd[0] : coordd;
-
-    // Corrected parsing: lpcd is the array/object of parcels
+    
     const lpcdInitialRaw = firstParcelContainer?.lpcd;
     if (!lpcdInitialRaw) {
         console.warn("No 'lpcd' (parcel data array/object) found in firstParcelContainer (initial, 200 OK):", JSON.stringify(distJson, null, 2));
@@ -309,7 +302,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
     
-    const targetParcelInitial = lpcdArrayInitial[0]; // This is the actual parcel object
+    const targetParcelInitial = lpcdArrayInitial[0]; 
 
     if (!targetParcelInitial?.pc?.pc1 || !targetParcelInitial?.pc?.pc2) {
         console.warn("Parcela más cercana (inicial) no contiene referencia catastral completa (pc1, pc2):", JSON.stringify(targetParcelInitial, null, 2));
@@ -333,8 +326,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (err: any) {
     console.error("Error crítico en el handler del proxy:", err);
-    // Avoid sending potentially sensitive stack traces to the client in production
-    // For debugging, you might want to log it or send more details
     const errorMessage = (err instanceof Error) ? err.message : 'Error interno del proxy.';
     const errorDetails = (err instanceof Error && err.stack && process.env.NODE_ENV !== 'production') ? err.stack : (typeof err === 'object' ? JSON.stringify(err) : String(err));
     
