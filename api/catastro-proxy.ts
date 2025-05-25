@@ -18,12 +18,12 @@ export default async function handler(
     return;
   }
 
-  // Corrected XML body for Consulta_RCCOOR operation
+  // Corrected XML body for Consulta_RCCOOR operation with tempuri.org namespace
   const soapRequestBody = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header/>
   <soap:Body>
-    <Consulta_RCCOOR xmlns="http://catastro.meh.es/">
+    <Consulta_RCCOOR xmlns="http://tempuri.org/OVCServWeb/OVCCoordenadas">
       <CoorX>${utmX}</CoorX>
       <CoorY>${utmY}</CoorY>
       <SRS>${srs}</SRS>
@@ -32,16 +32,16 @@ export default async function handler(
 </soap:Envelope>
   `.trim();
 
-  // Changed to the WCF service endpoint (.svc) from the WSDL
-  const catastroApiUrl = `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCoordenadas.svc/soap`;
+  // Reverted to the .asmx service endpoint
+  const catastroApiUrl = `https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCoordenadas.asmx`;
 
   try {
     const catastroResponse = await fetch(catastroApiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml;charset=UTF-8',
-        // SOAPAction for Consulta_RCCOOR with explicit quotes
-        'SOAPAction': '"http://www.catastro.meh.es/ICOVCCoordenadas/Consulta_RCCOOR"'
+        // SOAPAction for Consulta_RCCOOR using tempuri.org
+        'SOAPAction': '"http://tempuri.org/OVCServWeb/OVCCoordenadas/Consulta_RCCOOR"'
       },
       body: soapRequestBody,
     });
