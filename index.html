@@ -1,25 +1,36 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Detector de Coordenadas</title>
+  <title>GeoInfo AI - Ubicación y Propiedad</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌍</text></svg>">
 <script type="importmap">
 {
   "imports": {
+    "react/jsx-runtime": "https://esm.sh/react@^19.1.0/jsx-runtime",
     "react/": "https://esm.sh/react@^19.1.0/",
     "react": "https://esm.sh/react@^19.1.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.1.0/"
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.0.1"
   }
 }
 </script>
+<style>
+  /* Estilos para la clase prose generada por Tailwind Typography plugin (usado para el output de Gemini) */
+  .prose { color: inherit; }
+  .prose code::before, .prose code::after { content: ""; }
+</style>
 </head>
 <body>
   <noscript>Necesitas habilitar JavaScript para ejecutar esta aplicación.</noscript>
   <div id="root"></div>
-  <script type="module" src="https://esm.sh/gh/arturop/reformas/index.tsx"></script>
+  {/*
+    IMPORTANTE: Reemplaza YOUR_GITHUB_USERNAME, YOUR_REPO_NAME y YOUR_BRANCH_NAME (usualmente 'main')
+    con tus datos reales de GitHub para que esm.sh pueda cargar tu index.tsx.
+    Ejemplo: https://esm.sh/gh/nombreusuario/nombreproyecto@main/index.tsx
+  */}
+  <script type="module" src="https://esm.sh/gh/arturop/reformas@main/index.tsx"></script>
 </body>
 </html>
