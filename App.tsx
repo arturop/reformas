@@ -9,82 +9,69 @@ const App: React.FC = () => {
   const [catastroInfo, setCatastroInfo] = useState<{ referencia: string | null; direccion: string | null } | null>(null);
   const [catastroError, setCatastroError] = useState<string | null>(null);
   const [isFetchingCatastroInfo, setIsFetchingCatastroInfo] = useState<boolean>(false);
-  const [showApiWarning, setShowApiWarning] = useState<boolean>(false);
+  const [showApiWarning, setShowApiWarning] = useState<boolean>(true); // Keep general warning
 
-  // Estado para mostrar las coordenadas UTM de ejemplo usadas en la UI
   const [utmCoordinatesForDisplay, setUtmCoordinatesForDisplay] = useState<{x: number, y: number, srs: string} | null>(null);
 
   useEffect(() => {
     if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       setIsNonSecureContext(true);
     }
-    // Mostrar siempre la advertencia general sobre API externa al cargar la página.
-    setShowApiWarning(true); 
   }, []);
 
   const fetchCatastroInfo = async (geoCoords: GeolocationCoordinates | null) => {
     setIsFetchingCatastroInfo(true);
     setCatastroInfo(null);
     setCatastroError(null);
-    setUtmCoordinatesForDisplay(null); // Limpiar al inicio
+    setUtmCoordinatesForDisplay(null); 
 
     let utmX: number;
     let utmY: number;
     const srs = "EPSG:25830";
     
-    // --- INICIO SECCIÓN DE TRANSFORMACIÓN DE COORDENADAS (PENDIENTE) ---
-    // La API del Catastro (Consulta_CPMRC) espera coordenadas en formato UTM (e.g., EPSG:25830).
-    // La geolocalización del navegador proporciona Latitud/Longitud (WGS84).
-    // TODO: Implementar la transformación de WGS84 a UTM EPSG:25830.
-    // Por ahora, SIEMPRE usamos valores de ejemplo.
-    utmX = 123456; // Ejemplo X UTM EPSG:25830
-    utmY = 4567890; // Ejemplo Y UTM EPSG:25830
+    utmX = 123456; 
+    utmY = 4567890; 
     setUtmCoordinatesForDisplay({ x: utmX, y: utmY, srs: srs });
     console.warn(`ADVERTENCIA: Usando coordenadas UTM de ejemplo (X: ${utmX}, Y: ${utmY}, SRS: ${srs}). La transformación de coordenadas WGS84 a UTM EPSG:25830 no está implementada.`);
-    // --- FIN SECCIÓN DE TRANSFORMACIÓN DE COORDENADAS ---
-
-    const soapRequestBody = `
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cat="http://catastro.meh.es/">
-   <soapenv:Header/>
-   <soapenv:Body>
-      <cat:Consulta_CPMRC>
-         <cat:Coord>
-            <cat:xc>${utmX}</cat:xc>
-            <cat:yc>${utmY}</cat:yc>
-            <cat:sr>${srs}</cat:sr>
-         </cat:Coord>
-      </cat:Consulta_CPMRC>
-   </soapenv:Body>
-</soapenv:Envelope>
-    `.trim();
-
-    const catastroApiUrl = `https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCoordenadas.asmx`;
+    
+    const proxyApiUrl = `/api/catastro-proxy`; // URL for the Vercel proxy
     
     try {
-      const response = await fetch(catastroApiUrl, {
+      const response = await fetch(proxyApiUrl, {
         method: 'POST',
         headers: {
-          'Content-Type': 'text/xml;charset=UTF-8',
-          'SOAPAction': 'http://catastro.meh.es/Consulta_CPMRC' 
+          'Content-Type': 'application/json', // Sending JSON to our proxy
         },
-        body: soapRequestBody,
+        body: JSON.stringify({ utmX, utmY, srs }), // Send UTM coords as JSON
       });
       
+      const responseText = await response.text(); 
+
       if (!response.ok) {
-        console.error("Error en la respuesta de la red o CORS:", response.status, response.statusText, await response.text());
-        setCatastroError(`Error al contactar el servicio del Catastro (status: ${response.status}). Compruebe la consola del navegador para detalles. Esto puede deberse a restricciones de CORS, problemas de red, una solicitud SOAP mal formada o que el servicio requiera una acción SOAP específica. Endpoint: ${catastroApiUrl}`);
+        let errorDetails = responseText;
+        try {
+            // If proxy returns JSON error, parse it
+            if (response.headers.get('content-type')?.includes('application/json')) {
+                const jsonError = JSON.parse(responseText);
+                errorDetails = jsonError.error || jsonError.message || responseText;
+            }
+        } catch (parseError) {
+            // Ignore if not JSON, errorDetails remains responseText
+        }
+        console.error("Error desde el proxy o Catastro:", response.status, response.statusText, errorDetails);
+        setCatastroError(`Error al contactar el servicio (status: ${response.status}). Detalles: ${errorDetails}. Endpoint: ${proxyApiUrl}`);
         setIsFetchingCatastroInfo(false);
         return;
       }
 
-      const xmlText = await response.text();
+      // XML parsing logic remains the same, as proxy forwards XML from Catastro
       const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+      const xmlDoc = parser.parseFromString(responseText, "application/xml");
       
       const faultStringNode = xmlDoc.querySelector("faultstring, Fault > Reason > Text");
       if (faultStringNode) {
         const errorDesc = faultStringNode.textContent;
-        console.warn("Error SOAP desde la API del Catastro:", errorDesc);
+        console.warn("Error SOAP desde la API del Catastro (via proxy):", errorDesc);
         setCatastroError(`Catastro (SOAP Fault): ${errorDesc}`);
         setIsFetchingCatastroInfo(false);
         return;
@@ -93,8 +80,8 @@ const App: React.FC = () => {
       const resultNode = xmlDoc.querySelector("Consulta_CPMRCResult"); 
 
       if (!resultNode) {
-        setCatastroError("No se pudo encontrar el nodo 'Consulta_CPMRCResult' en la respuesta XML. La estructura de la respuesta puede haber cambiado o ser inesperada.");
-        console.log("Respuesta XML completa (para depuración de estructura):", xmlText);
+        setCatastroError("No se pudo encontrar 'Consulta_CPMRCResult' en la respuesta XML. La estructura puede haber cambiado.");
+        console.log("Respuesta XML completa (para depuración de estructura):", responseText);
         setIsFetchingCatastroInfo(false);
         return;
       }
@@ -105,7 +92,7 @@ const App: React.FC = () => {
       if (errorCodNode && errorCodNode.textContent !== "0") {
         const errorCode = errorCodNode.textContent;
         const errorDesc = errorDesNode?.textContent || "Error desconocido del Catastro";
-        console.warn("Error funcional desde la API del Catastro:", errorCode, errorDesc);
+        console.warn("Error funcional desde la API del Catastro (via proxy):", errorCode, errorDesc);
         setCatastroError(`Catastro: ${errorDesc} (Código: ${errorCode})`);
         setIsFetchingCatastroInfo(false);
         return;
@@ -155,23 +142,18 @@ const App: React.FC = () => {
         }
       }
 
-
       if (referenciaCatastral || direccion) {
         setCatastroInfo({ referencia: referenciaCatastral, direccion: direccion });
       } else {
-        if (!(errorCodNode && errorCodNode.textContent !== "0")) {
-            setCatastroError("No se encontró información catastral específica (referencia o dirección) para las coordenadas o la respuesta no pudo ser parseada. Verifique la consola para la respuesta XML completa.");
-            console.log("Respuesta XML del Catastro (para depuración):", xmlText);
+        if (!(errorCodNode && errorCodNode.textContent !== "0")) { // Only if no functional error was already set
+            setCatastroError("No se encontró información catastral específica (referencia o dirección) o la respuesta no pudo ser parseada.");
+            console.log("Respuesta XML del Catastro (vía proxy, para depuración):", responseText);
         }
       }
 
     } catch (e: any) {
-      console.error("Error al obtener información del Catastro:", e);
-      let detailedError = e.message;
-      if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
-          detailedError = "Fallo al realizar la solicitud. Esto podría deberse a un problema de red, un bloqueo de CORS por parte del navegador (muy común con APIs externas), o que el endpoint no esté disponible.";
-      }
-      setCatastroError(`Error al procesar la solicitud al Catastro: ${detailedError}`);
+      console.error("Error al procesar la solicitud al proxy del Catastro:", e);
+      setCatastroError(`Error al procesar la solicitud al proxy: ${e.message}`);
     } finally {
       setIsFetchingCatastroInfo(false);
     }
@@ -260,16 +242,13 @@ const App: React.FC = () => {
                 <h3 className="font-semibold text-lg">Sobre la API del Catastro:</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                Esta aplicación intenta conectarse a un servicio SOAP externo del Catastro. La obtención de datos puede fallar debido a:
+                Esta aplicación se conecta a un servicio del Catastro a través de un proxy. La obtención de datos puede fallar debido a:
               </p>
               <ul className="list-disc list-inside mt-1 ml-8 text-sm sm:text-base">
-                <li><strong>Restricciones de CORS:</strong> El navegador puede bloquear la solicitud si el servidor del Catastro no lo permite para este dominio.</li>
-                <li><strong>Problemas de red o del servicio:</strong> El servicio del Catastro podría estar temporalmente inaccesible.</li>
+                <li><strong>Problemas de red o del servicio del Catastro:</strong> El servicio podría estar temporalmente inaccesible.</li>
                 <li><strong>Coordenadas:</strong> El servicio actual espera coordenadas UTM (EPSG:25830). La conversión desde Lat/Lon está pendiente (ver nota abajo).</li>
+                <li><strong>Errores del proxy:</strong> Si el proxy intermedio falla.</li>
               </ul>
-              <p className="mt-2 ml-8 text-sm sm:text-base">
-                 Para una integración robusta, usualmente se requiere un backend propio (proxy) que maneje estas complejidades.
-              </p>
             </div>
           )}
 
@@ -282,9 +261,9 @@ const App: React.FC = () => {
                 <h3 className="font-semibold text-lg">Nota Importante (Coordenadas):</h3>
               </div>
               <p className="mt-1 ml-8 text-sm sm:text-base">
-                La consulta al Catastro (vía servicio SOAP `Consulta_CPMRC`) utiliza <strong>coordenadas UTM de ejemplo</strong> (X: {utmCoordinatesForDisplay.x}, Y: {utmCoordinatesForDisplay.y}, SRS: {utmCoordinatesForDisplay.srs})
-                en lugar de tu ubicación real (Lat/Lon). La transformación de coordenadas geográficas (WGS84) a UTM (EPSG:25830) es un paso técnico pendiente.
-                Los resultados mostrados corresponden a estas coordenadas de prueba. Otros servicios del Catastro (ej. WMS) podrían usarse para obtener referencias catastrales desde Lat/Lon, pero también presentan desafíos de integración.
+                La consulta al Catastro utiliza <strong>coordenadas UTM de ejemplo</strong> (X: {utmCoordinatesForDisplay.x}, Y: {utmCoordinatesForDisplay.y}, SRS: {utmCoordinatesForDisplay.srs})
+                en lugar de tu ubicación real. La transformación de coordenadas geográficas (WGS84) a UTM (EPSG:25830) es un paso técnico pendiente.
+                Los resultados mostrados corresponden a estas coordenadas de prueba.
               </p>
             </div>
           )}
@@ -340,7 +319,7 @@ const App: React.FC = () => {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Consultando al Servicio del Catastro...
+              Consultando al Servicio del Catastro (vía proxy)...
             </div>
           )}
 
@@ -386,7 +365,7 @@ const App: React.FC = () => {
       </div>
       <footer className="mt-8 text-center text-indigo-300 text-xs sm:text-sm">
         <p>&copy; {new Date().getFullYear()} Consulta Catastral Geo. Datos proporcionados por la Dirección General del Catastro.</p>
-        <p className="mt-1">Esta aplicación es una demostración y enfrenta desafíos como la conversión de coordenadas (Lat/Lon a UTM) y posibles restricciones CORS al acceder a servicios externos. Catastro ofrece diversos servicios (SOAP, WMS, etc.) cuya integración directa desde el navegador puede ser compleja.</p>
+        <p className="mt-1">Esta aplicación utiliza un proxy para acceder a los servicios del Catastro y aún enfrenta desafíos como la conversión de coordenadas (Lat/Lon a UTM).</p>
       </footer>
     </div>
   );

@@ -1,83 +1,69 @@
 # GeoCatastro - Consulta Catastral por Coordenadas
 
-Esta aplicación te permite obtener información catastral básica (referencia y dirección) para tu ubicación actual utilizando los servicios web de la Dirección General del Catastro de España.
+Esta aplicación te permite obtener información catastral básica (referencia y dirección) para tu ubicación actual utilizando los servicios web de la Dirección General del Catastro de España, a través de un proxy desplegado en Vercel.
 
 ## Funcionalidades
 
 *   Obtiene tus coordenadas geográficas (latitud y longitud) usando la API de geolocalización del navegador.
-*   Consulta el servicio web del Catastro (HTTPS) para obtener información asociada a esas coordenadas.
+*   Envía las coordenadas (actualmente de ejemplo) a un proxy en Vercel.
+*   El proxy consulta el servicio web SOAP del Catastro para obtener información asociada a esas coordenadas.
 *   Muestra la referencia catastral y la dirección si están disponibles.
-*   Manejo de errores de geolocalización y del servicio del Catastro.
-*   Advertencia sobre posibles problemas de CORS o red al contactar el servicio externo del Catastro.
+*   Manejo de errores de geolocalización, del proxy y del servicio del Catastro.
 *   Interfaz responsiva y moderna construida con React, TypeScript y Tailwind CSS.
 
-## Ejecutar Localmente
+## Arquitectura
 
-**Prerrequisitos:** Node.js (v18+) y npm/yarn.
+*   **Frontend:** Aplicación React (Vite + TypeScript + Tailwind CSS).
+*   **Backend (Proxy):** Una función serverless de Vercel (Node.js/TypeScript) ubicada en el directorio `/api`. Esta función recibe las solicitudes del frontend, llama al servicio SOAP del Catastro y devuelve la respuesta. Esto evita problemas de CORS que ocurrirían con llamadas directas desde el navegador.
 
-1.  **Clona el repositorio** (si es un proyecto separado) o asegúrate de tener todos los archivos (`index.html`, `App.tsx`, `index.tsx`, `package.json`, `vite.config.ts`, `tsconfig.json`, `tailwind.config.js`, `postcss.config.js`).
+## Ejecutar Localmente con Vercel CLI
+
+**Prerrequisitos:** Node.js (v18+), npm/yarn, y [Vercel CLI](https://vercel.com/docs/cli).
+
+1.  **Clona el repositorio** (si es un proyecto separado) o asegúrate de tener todos los archivos.
 
 2.  **Navega a la carpeta del proyecto** en tu terminal.
 
 3.  **Instala las dependencias:**
     ```bash
     npm install
-    ```
-    o si usas yarn:
-    ```bash
-    yarn install
+    # o si usas yarn:
+    # yarn install
     ```
 
-4.  **Ejecuta la aplicación en modo desarrollo:**
+4.  **Inicia sesión en Vercel CLI (si es la primera vez):**
     ```bash
-    npm run dev
+    vercel login
     ```
-    o
+
+5.  **Ejecuta la aplicación en modo desarrollo con Vercel CLI:**
     ```bash
-    yarn dev
+    vercel dev
     ```
-    La aplicación estará disponible generalmente en `http://localhost:5173` (Vite te indicará la URL exacta).
+    Esto iniciará tanto el frontend de Vite como las funciones serverless de la carpeta `/api`. La aplicación estará disponible generalmente en una URL como `http://localhost:3000` (Vercel CLI te indicará la URL exacta).
 
 ## Archivos de Configuración Clave
 
-*   **`vite.config.ts`**: Configuración para Vite, incluyendo la base para despliegues.
+*   **`vite.config.ts`**: Configuración para Vite. La propiedad `base` podría necesitar ajuste dependiendo de la configuración de tu proyecto en Vercel.
+*   **`api/catastro-proxy.ts`**: La función serverless que actúa como proxy.
 *   **`tailwind.config.js`**: Configuración de Tailwind CSS.
-*   **`postcss.config.js`**: Configuración de PostCSS (usualmente para Tailwind y Autoprefixer).
-*   **`tsconfig.json`**: Configuración del compilador de TypeScript.
+*   **`postcss.config.js`**: Configuración de PostCSS.
+*   **`tsconfig.json`**: Configuración del compilador de TypeScript para el frontend.
 
-## Despliegue
+## Despliegue en Vercel
 
-Para desplegar esta aplicación (por ejemplo, en GitHub Pages):
+1.  **Asegúrate de tener una cuenta en Vercel** y haber conectado tu repositorio de GitHub/GitLab/Bitbucket a Vercel.
 
-1.  **Ajusta `base` en `vite.config.ts`**:
-    Si vas a desplegar en un subdirectorio (ej. `https://tu-usuario.github.io/tu-repositorio/`), actualiza la propiedad `base` en `vite.config.ts`:
-    ```javascript
-    // vite.config.ts
-    export default defineConfig({
-      base: '/tu-repositorio/', // Ajusta esto al nombre de tu repositorio
-      plugins: [react()],
-      // ... otras configuraciones
-    });
-    ```
-    Si despliegas en la raíz de un dominio, `base` puede ser `'/'`.
+2.  **Configuración del Proyecto en Vercel:**
+    *   Vercel generalmente detectará que es un proyecto Vite y configurará los ajustes de construcción automáticamente.
+    *   Framework Preset: Vite
+    *   Build Command: `vite build` (o `npm run build`)
+    *   Output Directory: `dist`
+    *   Install Command: `npm install` (o `yarn install`)
+    *   Las funciones en el directorio `/api` serán desplegadas automáticamente.
 
-2.  **Construye la aplicación:**
-    ```bash
-    npm run build
-    ```
-    o
-    ```bash
-    yarn build
-    ```
-    Esto generará una carpeta `dist` con los archivos estáticos listos para el despliegue.
+3.  **Haz push de tus cambios a la rama conectada con Vercel (ej. `main`).** Vercel construirá y desplegará tu aplicación y el proxy.
 
-3.  **Despliega la carpeta `dist`** a tu proveedor de hosting estático preferido.
-
-### Ejemplo: Despliegue en GitHub Pages
-
-Puedes usar GitHub Actions para automatizar el despliegue. Un workflow típico (ej. `.github/workflows/deploy.yml`) construiría y desplegaría la rama `gh-pages`.
-
-**Importante sobre el Servicio del Catastro y CORS:**
-El servicio web del Catastro (`https://ovc.catastro.mineco.es/...`) opera sobre HTTPS. Sin embargo, como con cualquier API externa, pueden existir restricciones de CORS (Cross-Origin Resource Sharing) que impidan que tu aplicación (especialmente si está alojada en un dominio diferente como `github.io`) haga solicitudes directas desde el navegador.
-
-Si experimentas errores al obtener la información catastral (especialmente errores de red o `Failed to fetch` en la consola del navegador), CORS podría ser la causa. Para una producción robusta, una solución común es usar un backend propio (un proxy) que reciba la solicitud desde tu frontend, luego llame al servicio del Catastro desde el servidor (donde las restricciones CORS no aplican de la misma manera), y finalmente devuelva la respuesta a tu frontend.
+**Importante sobre el Servicio del Catastro:**
+*   La aplicación utiliza coordenadas UTM de **ejemplo**. La transformación de Latitud/Longitud (obtenidas del navegador) a UTM EPSG:25830 (requeridas por el servicio SOAP) aún es una tarea pendiente.
+*   El servicio del Catastro puede tener sus propios límites de tasa o tiempos de inactividad.
