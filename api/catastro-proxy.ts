@@ -100,18 +100,20 @@ async function fetchParcelDetailsAndRespond(
     }
     
     const bico = detResult?.bico;
-    // Handle cases where bico or bico.bi might not exist or not be an array
     const bi = bico?.bi ? (Array.isArray(bico.bi) ? bico.bi[0] : bico.bi) : null;
 
-    const usoPrincipal = bi?.luso || null;
-    const superficie = bi?.sfc ? String(bi.sfc) : null;
+    // Try direct properties first, then fall back to nested ones
+    const usoPrincipal = detResult?.usoPrincipal || bi?.luso || null;
+    const superficie = detResult?.superficie ? String(detResult.superficie) : (bi?.sfc ? String(bi.sfc) : null);
     
-    let antiguedad: string | null = null;
-    const lcons = detResult?.lcons;
-    if (lcons && Array.isArray(lcons) && lcons.length > 0) {
-        const primeraConstruccion = lcons[0];
-        if (primeraConstruccion?.dfcons?.ant) {
-            antiguedad = String(primeraConstruccion.dfcons.ant);
+    let antiguedad: string | null = detResult?.antiguedad ? String(detResult.antiguedad) : null;
+    if (!antiguedad) { // If not found directly, try nested path
+        const lcons = detResult?.lcons;
+        if (lcons && Array.isArray(lcons) && lcons.length > 0) {
+            const primeraConstruccion = lcons[0];
+            if (primeraConstruccion?.dfcons?.ant) {
+                antiguedad = String(primeraConstruccion.dfcons.ant);
+            }
         }
     }
 
