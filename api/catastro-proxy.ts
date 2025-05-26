@@ -67,7 +67,8 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
 
-    console.log('>>> CAT DETAILS RAW JSON:', JSON.stringify(detJson, null, 2));
+    // Log the entire raw JSON response from Consulta_DNPRC
+    console.log('>>> CAT DETAILS RAW JSON (detJson):', JSON.stringify(detJson, null, 2));
 
     if (!detJson || typeof detJson.Consulta_DNPRCResult === 'undefined') {
       console.warn("Consulta_DNPRCResult no encontrado o 'undefined' en la respuesta de Catastro. Respuesta completa:", JSON.stringify(detJson, null, 2));
@@ -77,9 +78,10 @@ async function fetchParcelDetailsAndRespond(
         messageForClient = "Respuesta vacía del Catastro al solicitar detalles de la finca.";
       } else if (detJson && typeof detJson.mensaje === 'string') {
         messageForClient = detJson.mensaje;
-      } else if (detJson && detJson.lerr && detJson.lerr.err && typeof detJson.lerr.err.des === 'string') {
+      } else if (detJson && detJson.lerr?.err?.des && typeof detJson.lerr.err.des === 'string') {
           messageForClient = detJson.lerr.err.des;
       }
+
 
       res.status(200).json({
         referenciaOriginal: refCat,
@@ -92,9 +94,10 @@ async function fetchParcelDetailsAndRespond(
     }
     
     const detResult = detJson.Consulta_DNPRCResult;
-    console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2)); 
+    // Log the Consulta_DNPRCResult part
+    console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult - detResult):', JSON.stringify(detResult, null, 2)); 
 
-    let finalMessage = contextMessage || '';
+    let accumulatedMessage = contextMessage || '';
 
     if (detResult?.control?.cuerr > 0) {
       let errorMsg = 'Error al obtener detalles de la finca desde Catastro.';
@@ -107,115 +110,111 @@ async function fetchParcelDetailsAndRespond(
       console.error(`Error from Consulta_DNPRC (within result) for RC ${refCat}:`, JSON.stringify(detResult, null, 2));
       
       const detailsFetchError = `Fallo al obtener detalles para ${refCat}: ${errorMsg} (Código: ${errorCode})`;
-      finalMessage = finalMessage ? `${finalMessage}. ${detailsFetchError}` : detailsFetchError;
+      accumulatedMessage = accumulatedMessage ? `${accumulatedMessage}. ${detailsFetchError}` : detailsFetchError;
       
       res.status(200).json({ 
         referenciaOriginal: refCat,
         direccionOriginalLDT: direccionLDT,
         distancia,
         datosDetallados: null,
-        message: finalMessage,
+        message: accumulatedMessage,
       } as CatastroInfoDataForProxy);
       return;
     }
     
-    // MODIFIED PARSING LOGIC STARTS HERE
     let datosDetalladosObject: CatastroInfoDataForProxy['datosDetallados'] = null;
     let primerBienInmueble: any = null;
 
-    // Check new path: Consulta_DNPRCResult.lrcdnb.lrcdnb
+    // Path: detJson.Consulta_DNPRCResult.lrcdnb.lrcdnb[0].bi
     if (detResult.lrcdnb?.lrcdnb && Array.isArray(detResult.lrcdnb.lrcdnb) && detResult.lrcdnb.lrcdnb.length > 0) {
-        // Access the 'bi' (bien inmueble) object from the first element
         primerBienInmueble = detResult.lrcdnb.lrcdnb[0]?.bi; 
         console.log("Usando detResult.lrcdnb.lrcdnb[0].bi como fuente de datos principal.");
     } else {
-        console.warn(`No se encontró 'lrcdnb.lrcdnb' con elementos o 'bi' en detResult para RC ${refCat}. Probando ruta anterior 'lrcdnp.rcdnp'.`);
-        // Fallback or alternative path if `lrcdnb` is not present (original logic for `lrcdnp`)
+        console.warn(`No se encontró 'lrcdnb.lrcdnb' con elementos o 'bi' en detResult para RC ${refCat}. Se intentará fallback si existe, o resultará en datosDetallados:null.`);
+        // Fallback logic (currently just a log, can be expanded if other paths are identified)
         if (detResult.lrcdnp?.rcdnp && Array.isArray(detResult.lrcdnp.rcdnp) && detResult.lrcdnp.rcdnp.length > 0) {
-            primerBienInmueble = detResult.lrcdnp.rcdnp[0]; // This was the old path.
-            console.log("Fallback: Usando detResult.lrcdnp.rcdnp[0] como fuente de datos.");
-            // Note: Extraction from this structure might need different sub-paths (e.g., .debi, .dt.loc.dir)
-            // For simplicity in this fix, we'll primarily rely on the 'lrcdnb.lrcdnb[0].bi' structure.
-            // If this fallback is hit often, its specific sub-paths would need re-verification.
-            // For now, we will try to extract using the '.bi' sub-object structure if it somehow matches,
-            // or it will likely result in nulls for details if this path is taken and structure is different.
+            console.log("Advertencia: La ruta principal 'lrcdnb.lrcdnb[0].bi' falló. Se detectó una ruta antigua 'lrcdnp.rcdnp' pero su estructura no se procesará activamente para detalles en esta versión.");
         }
     }
 
 
     if (primerBienInmueble) {
-        console.log("Primer bien inmueble data:", JSON.stringify(primerBienInmueble, null, 2));
+        // Log the found 'primerBienInmueble' object
+        console.log("Primer bien inmueble data (primerBienInmueble):", JSON.stringify(primerBienInmueble, null, 2));
         
         let extractedDireccionCompleta: string | null = null;
-        // User suggested: primerBien.dirmun && primerBien.dirmun.dir ? primerBien.dirmun.dir : null
         if (primerBienInmueble.dirmun?.dir) {
             if (typeof primerBienInmueble.dirmun.dir === 'string') {
                 extractedDireccionCompleta = primerBienInmueble.dirmun.dir.trim();
-            } else if (typeof primerBienInmueble.dirmun.dir.nv === 'string') { // Attempt to build from components if .dir is an object
+            } else if (primerBienInmueble.dirmun.dir.hasOwnProperty('nv') && typeof primerBienInmueble.dirmun.dir.nv === 'string') { 
                  const dirDetails = primerBienInmueble.dirmun.dir;
                  const addressParts = [
-                    dirDetails.tv, // Tipo vía
-                    dirDetails.nv, // Nombre vía
+                    dirDetails.tv, 
+                    dirDetails.nv, 
                     dirDetails.pnp ? `Nº ${dirDetails.pnp}` : null,
                     dirDetails.snp ? `-${dirDetails.snp}` : null,
-                    dirDetails.bq, // Bloque
-                    dirDetails.es, // Escalera
-                    dirDetails.pt, // Planta
-                    dirDetails.pu  // Puerta
-                 ].filter(Boolean).join(' ').trim();
+                    dirDetails.bq, 
+                    dirDetails.es, 
+                    dirDetails.pt, 
+                    dirDetails.pu  
+                 ].filter(val => val !== null && val !== undefined && String(val).trim() !== '').join(' ').trim();
                  if (addressParts) extractedDireccionCompleta = addressParts;
             }
         }
-        // Fallback to LDT if no better address found
+        
         if (!extractedDireccionCompleta || extractedDireccionCompleta === '') {
-            extractedDireccionCompleta = direccionLDT;
+            extractedDireccionCompleta = direccionLDT; // Fallback to LDT if no better address found or extracted
         }
 
-
-        const extractedUsoPrincipal = primerBienInmueble.dt?.luso || null;
+        const extractedUsoPrincipal = primerBienInmueble.dt?.luso ? String(primerBienInmueble.dt.luso) : null;
         const extractedSuperficie = primerBienInmueble.dt?.sfc ? String(primerBienInmueble.dt.sfc) : null;
         const extractedAntiguedad = primerBienInmueble.dtcat?.ant ? String(primerBienInmueble.dtcat.ant) : null;
         const extractedValorCatastral = primerBienInmueble.dtcat?.vc?.v ? String(primerBienInmueble.dtcat.vc.v) : null;
 
-        const hasSpecificDetails = 
-            (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) || // Considered detail if different from basic LDT
+        datosDetalladosObject = {
+            direccionCompleta: extractedDireccionCompleta,
+            usoPrincipal: extractedUsoPrincipal,
+            superficie: extractedSuperficie,
+            antiguedad: extractedAntiguedad,
+            valorCatastral: extractedValorCatastral,
+        };
+        console.log("Detalles (incondicionalmente) extraídos y asignados a datosDetalladosObject:", JSON.stringify(datosDetalladosObject, null, 2));
+        
+        // Refine message based on details found
+        const anySpecificDetailFound = 
+            (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) ||
             extractedUsoPrincipal || 
             extractedSuperficie || 
             extractedAntiguedad ||
             extractedValorCatastral;
 
-        if (hasSpecificDetails) {
-            datosDetalladosObject = {
-                direccionCompleta: extractedDireccionCompleta,
-                usoPrincipal: extractedUsoPrincipal,
-                superficie: extractedSuperficie,
-                antiguedad: extractedAntiguedad,
-                valorCatastral: extractedValorCatastral,
-            };
-            console.log("Detalles extraídos del bien inmueble:", JSON.stringify(datosDetalladosObject, null, 2));
+        if (anySpecificDetailFound) {
+            const detailsFoundMsg = "Bien inmueble encontrado y detalles procesados.";
+            accumulatedMessage = accumulatedMessage ? `${accumulatedMessage}. ${detailsFoundMsg}` : detailsFoundMsg;
         } else {
-            finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para el inmueble.` 
-                                        : `No se encontraron detalles adicionales significativos para el inmueble. Mostrando información básica.`;
-            console.log("No se encontraron detalles específicos suficientes en 'primerBienInmueble'.");
+            const noExtraDetailsMsg = "Bien inmueble localizado, pero no se encontraron detalles adicionales específicos (uso, superficie, etc.). Mostrando información básica.";
+            accumulatedMessage = accumulatedMessage ? `${accumulatedMessage}. ${noExtraDetailsMsg}` : noExtraDetailsMsg;
+             console.log(noExtraDetailsMsg);
         }
 
     } else {
-        console.warn(`No se encontró una estructura de datos de inmueble reconocible ('lrcdnb.lrcdnb[0].bi' o fallback) en la respuesta de Catastro para RC ${refCat}.`);
-        finalMessage = finalMessage ? `${finalMessage}. No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.` 
-                                    : 'No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.';
+        // primerBienInmueble was null
+        const noStructureMsg = 'No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.';
+        accumulatedMessage = accumulatedMessage ? `${accumulatedMessage}. ${noStructureMsg}` : noStructureMsg;
+        console.warn(`No se encontró 'primerBienInmueble' en la respuesta de Catastro para RC ${refCat}. ${accumulatedMessage}`);
+        // datosDetalladosObject remains null here
     }
-    // MODIFIED PARSING LOGIC ENDS HERE
-
+    
     res.status(200).json({
       referenciaOriginal: refCat,
       direccionOriginalLDT: direccionLDT,
       distancia,
-      datosDetallados: datosDetalladosObject,
-      message: finalMessage || undefined, 
+      datosDetallados: datosDetalladosObject, // Will be an object or null
+      message: accumulatedMessage.trim() || undefined, 
     } as CatastroInfoDataForProxy);
 
   } catch (detailsErr: any) {
-    console.error(`Fetch/Processing Error in fetchParcelDetailsAndRespond for RC ${refCat}:`, detailsErr);
+    console.error(`Fetch/Processing Error Critical in fetchParcelDetailsAndRespond for RC ${refCat}:`, detailsErr);
     let finalMessage = contextMessage || '';
     const detailsFetchError = `Error crítico al procesar detalles para ${refCat}: ${detailsErr.message}`;
     finalMessage = finalMessage ? `${finalMessage}. ${detailsFetchError}` : detailsFetchError;
@@ -224,7 +223,7 @@ async function fetchParcelDetailsAndRespond(
       referenciaOriginal: refCat,
       direccionOriginalLDT: direccionLDT,
       distancia,
-      datosDetallados: null,
+      datosDetallados: null, // Ensure null on critical error
       message: finalMessage,
     } as CatastroInfoDataForProxy);
   }
