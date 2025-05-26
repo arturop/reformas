@@ -51,17 +51,55 @@ async function fetchParcelDetailsAndRespond(
 
     const detBodyText = await detRes.text();
     console.log(`>>> CAT DETAILS STATUS: ${detRes.status}`);
-    // Avoid logging potentially very large bodies in production if not needed
-    // console.log(`>>> CAT DETAILS BODY: ${detBodyText}`); 
     
-    const detJson = JSON.parse(detBodyText); 
+    let detJson: any;
+    try {
+      detJson = JSON.parse(detBodyText);
+    } catch (parseError: any) {
+      console.error(`Error parsing JSON from Consulta_DNPRC for RC ${refCat}:`, parseError, `Body text (first 500 chars): ${detBodyText.substring(0, 500)}`);
+      const parseErrorMessage = `Error al interpretar la respuesta detallada del Catastro (no es JSON válido).`;
+      res.status(200).json({
+        referenciaOriginal: refCat,
+        direccionOriginalLDT: direccionLDT,
+        distancia,
+        datosDetallados: null,
+        message: `${contextMessage ? contextMessage + '. ' : ''}${parseErrorMessage}`,
+      } as CatastroInfoDataForProxy);
+      return;
+    }
+
+    console.log('>>> CAT DETAILS RAW JSON:', JSON.stringify(detJson, null, 2));
+
+    if (!detJson || typeof detJson.Consulta_DNPRCResult === 'undefined') {
+      console.warn("Consulta_DNPRCResult no encontrado o 'undefined' en la respuesta de Catastro. Respuesta completa:", JSON.stringify(detJson, null, 2));
+      
+      let messageForClient = "No se encontraron detalles específicos para la finca en Catastro.";
+      if (detJson && Object.keys(detJson).length === 0) {
+        messageForClient = "Respuesta vacía del Catastro al solicitar detalles de la finca.";
+      } else if (detJson && typeof detJson.mensaje === 'string') {
+        messageForClient = detJson.mensaje;
+      } else if (detJson && detJson.lerr && detJson.lerr.err && typeof detJson.lerr.err.des === 'string') {
+          messageForClient = detJson.lerr.err.des;
+      }
+
+      res.status(200).json({
+        referenciaOriginal: refCat,
+        direccionOriginalLDT: direccionLDT,
+        distancia: distancia,
+        datosDetallados: null,
+        message: `${contextMessage ? contextMessage + '. ' : ''}${messageForClient}`,
+      } as CatastroInfoDataForProxy);
+      return;
+    }
+    
     const detResult = detJson.Consulta_DNPRCResult;
     console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2));
 
 
     let finalMessage = contextMessage || '';
 
-    if (!detRes.ok || (detResult && detResult.control && detResult.control.cuerr > 0)) {
+    // Check for errors within Consulta_DNPRCResult if it exists
+    if (detResult?.control?.cuerr > 0) {
       let errorMsg = 'Error al obtener detalles de la finca.';
       let errorCode = detResult?.control?.cuerr || 'N/A';
       if (detResult?.lerr?.err) {
@@ -69,7 +107,7 @@ async function fetchParcelDetailsAndRespond(
         errorMsg = errDetails.des ? errDetails.des.trim() : errorMsg;
         errorCode = errDetails.cod || errorCode;
       }
-      console.error(`Error from Consulta_DNPRC for RC ${refCat}:`, JSON.stringify(detJson, null, 2));
+      console.error(`Error from Consulta_DNPRC (within result) for RC ${refCat}:`, JSON.stringify(detResult, null, 2));
       
       const detailsFetchError = `Fallo al obtener detalles para ${refCat}: ${errorMsg} (Código: ${errorCode})`;
       finalMessage = finalMessage ? `${finalMessage}. ${detailsFetchError}` : detailsFetchError;
@@ -102,12 +140,11 @@ async function fetchParcelDetailsAndRespond(
     const bico = detResult?.bico;
     const bi = bico?.bi ? (Array.isArray(bico.bi) ? bico.bi[0] : bico.bi) : null;
 
-    // Try direct properties first, then fall back to nested ones
     const usoPrincipal = detResult?.usoPrincipal || bi?.luso || null;
     const superficie = detResult?.superficie ? String(detResult.superficie) : (bi?.sfc ? String(bi.sfc) : null);
     
     let antiguedad: string | null = detResult?.antiguedad ? String(detResult.antiguedad) : null;
-    if (!antiguedad) { // If not found directly, try nested path
+    if (!antiguedad) {
         const lcons = detResult?.lcons;
         if (lcons && Array.isArray(lcons) && lcons.length > 0) {
             const primeraConstruccion = lcons[0];
@@ -153,7 +190,7 @@ async function buscarPorAnillos(
   srs: string
 ): Promise<boolean> { 
   const radios = [5, 10, 25, 50, 100]; 
-  const angulos = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, Math.PI / 4, 3 * Math.PI / 4, 5 * Math.PI / 4, 7 * Math.PI / 4]; // Added more angles
+  const angulos = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, Math.PI / 4, 3 * Math.PI / 4, 5 * Math.PI / 4, 7 * Math.PI / 4];
 
   console.log(`Iniciando búsqueda por anillos para ${originalUtmX}, ${originalUtmY}`);
 
@@ -179,8 +216,6 @@ async function buscarPorAnillos(
         const rres = await fetch(distanciaUrlAnillo, { method: 'GET', headers: { 'Accept': 'application/json' } });
         
         const ringBodyText = await rres.text();
-        // console.log(`>>> CAT RING STATUS (${r}m, ${theta.toFixed(2)}rad): ${rres.status}`);
-        // console.log(`>>> CAT RING BODY (${r}m, ${theta.toFixed(2)}rad): ${ringBodyText.substring(0, 500)}`); // Log snippet
 
         if (rres.status === 404) {
             console.warn(`Ring search: 404 para ${intentoX.toFixed(2)},${intentoY.toFixed(2)}.`);
@@ -191,8 +226,15 @@ async function buscarPorAnillos(
           console.warn(`Ring search: Consulta_RCCOOR_Distancia falló para ${intentoX.toFixed(2)},${intentoY.toFixed(2)} con status ${rres.status}`);
           continue; 
         }
+        
+        let ringJson: any;
+        try {
+            ringJson = JSON.parse(ringBodyText);
+        } catch (parseError: any) {
+            console.warn(`Ring search: Error parsing JSON for ${intentoX.toFixed(2)},${intentoY.toFixed(2)}: ${parseError.message}. Body: ${ringBodyText.substring(0,200)}`);
+            continue;
+        }
 
-        const ringJson = JSON.parse(ringBodyText); 
         const ringResult = ringJson.Consulta_RCCOOR_DistanciaResult;
 
         if (ringResult?.control?.cuerr === 0 && ringResult?.coordenadas_distancias?.coordd) {
@@ -277,7 +319,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     'https://ovc.catastro.meh.es/OVCServWeb/' +
     'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia';
   const queryDist =
-    '?CoorX=' + encodeURIComponent(utmX.toFixed(2)) + // Catastro seems to prefer 2 decimal places for UTM
+    '?CoorX=' + encodeURIComponent(utmX.toFixed(2)) +
     '&CoorY=' + encodeURIComponent(utmY.toFixed(2)) + 
     '&SRS=' + encodeURIComponent(srs);
   const distanciaUrl = baseDist + queryDist;
@@ -291,9 +333,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const distBodyText = await distRes.text();
-    // console.log(`>>> CAT DIST STATUS (Initial): ${distRes.status}`);
-    // console.log(`>>> CAT DIST BODY (Initial): ${distBodyText.substring(0, 1000)}`); // Log snippet
-
 
     if (distRes.status === 404) {
       console.warn(`Consulta_RCCOOR_Distancia inicial devolvió 404 para ${utmX}, ${utmY}. Iniciando búsqueda por anillos.`);
@@ -307,7 +346,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return; 
     }
     
-    const distJson = JSON.parse(distBodyText); 
+    let distJson: any;
+    try {
+        distJson = JSON.parse(distBodyText);
+    } catch (parseError: any) {
+        console.error(`Error parsing JSON from initial Consulta_RCCOOR_Distancia:`, parseError, `Body text (first 500 chars): ${distBodyText.substring(0, 500)}`);
+        res.status(200).json({
+            error: 'Error al interpretar la respuesta inicial del Catastro (no es JSON válido).',
+            message: 'No se pudo procesar la respuesta del servicio de Catastro.'
+        } as CatastroInfoDataForProxy & { error: string });
+        return;
+    }
+    
     const distResult = distJson.Consulta_RCCOOR_DistanciaResult;
 
     if (!distRes.ok || (distResult?.control?.cuerr > 0)) {
@@ -319,18 +369,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             errorCode = errDetails.cod || errorCode;
         }
         console.error("Error from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
-        // For client, send application-level error, not necessarily the Catastro HTTP status
         res.status(200).json({ 
             error: 'Error al consultar parcelas cercanas (inicial).',
             message: `${errorMsg} (Código: ${errorCode})`
-        } as CatastroInfoDataForProxy & { error: string }); // Explicitly type the error response
+        } as CatastroInfoDataForProxy & { error: string });
         return;
     }
     
     const coorddList = distResult?.coordenadas_distancias?.coordd;
     if (!coorddList) {
         console.warn("Estructura inesperada (sin coordd) from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
-        // Attempt ring search as Catastro response might be incomplete for the exact point
         console.log("Respuesta inicial sin 'coordd'. Iniciando búsqueda por anillos.");
         const respondedFromRings = await buscarPorAnillos(res, utmX, utmY, srs);
         if (!respondedFromRings) {
@@ -342,7 +390,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    // Flatten all parcels from all coordd items
     const todasParcels: CatastroParcel[] = [];
     const coorddArray = Array.isArray(coorddList) ? coorddList : [coorddList];
 
@@ -385,12 +432,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: any) {
     console.error("Error crítico en el handler del proxy:", err);
     const errorMessage = (err instanceof Error) ? err.message : 'Error interno del proxy.';
-    // Avoid sending detailed stack in production for security
-    const errorDetails = (err instanceof Error && err.stack && process.env.NODE_ENV !== 'production') ? err.stack : (typeof err === 'object' ? JSON.stringify(err) : String(err));
     
-    res.status(500).json({ // Use 500 for actual proxy internal errors
-      error: "Error interno del servidor proxy.", // Generic message for client
-      details: process.env.NODE_ENV !== 'production' ? errorDetails : undefined // Only send details in dev
+    res.status(500).json({
+      error: "Error interno del servidor proxy.", 
+      details: process.env.NODE_ENV !== 'production' ? errorMessage : undefined 
     });
   }
 }
