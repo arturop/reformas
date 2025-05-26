@@ -12,7 +12,8 @@ interface CatastroInfoData {
     direccionCompleta: string | null;
     usoPrincipal: string | null;
     superficie: string | null;
-    antiguedad?: string | null; // Added for construction year
+    antiguedad?: string | null;
+    valorCatastral?: string | null; // Added
   } | null;
   message?: string;
 }
@@ -223,6 +224,7 @@ const App: React.FC = () => {
             {catastroInfo.datosDetallados.usoPrincipal && <p className="text-sm text-slate-600"><strong>Uso Principal:</strong> {catastroInfo.datosDetallados.usoPrincipal}</p>}
             {catastroInfo.datosDetallados.superficie && <p className="text-sm text-slate-600"><strong>Superficie:</strong> {catastroInfo.datosDetallados.superficie}</p>}
             {catastroInfo.datosDetallados.antiguedad && <p className="text-sm text-slate-600"><strong>Antigüedad Construcción:</strong> {catastroInfo.datosDetallados.antiguedad}</p>}
+            {catastroInfo.datosDetallados.valorCatastral && <p className="text-sm text-slate-600"><strong>Valor Catastral:</strong> {catastroInfo.datosDetallados.valorCatastral}</p>} 
           </div>
         )}
         {/* This message is for partial data scenarios where primary data might exist but details failed, 
@@ -359,4 +361,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-

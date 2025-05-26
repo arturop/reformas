@@ -11,6 +11,7 @@ interface CatastroInfoDataForProxy {
     usoPrincipal: string | null;
     superficie: string | null;
     antiguedad?: string | null; 
+    valorCatastral?: string | null; // Added
   } | null;
   message?: string; 
 }
@@ -160,12 +161,14 @@ async function fetchParcelDetailsAndRespond(
     let extractedUsoPrincipal: string | null = null;
     let extractedSuperficie: string | null = null;
     let extractedAntiguedad: string | null = null;
+    let extractedValorCatastral: string | null = null; // Added
 
     const debiSource = firstProperty.debi;
     if (debiSource) {
         extractedUsoPrincipal = debiSource.luso || null;
         extractedSuperficie = debiSource.sfc ? String(debiSource.sfc) : null;
         extractedAntiguedad = debiSource.ant ? String(debiSource.ant) : null;
+        extractedValorCatastral = debiSource.cpt ? String(debiSource.cpt) : null; // Added
         console.log("Extrayendo detalles desde 'firstProperty.debi' (lrcdnp).");
     } else {
         console.warn("El primer inmueble en 'lrcdnp.rcdnp' no contiene la sub-propiedad 'debi'. No se pueden extraer detalles económicos.");
@@ -177,7 +180,8 @@ async function fetchParcelDetailsAndRespond(
         (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) ||
         extractedUsoPrincipal || 
         extractedSuperficie || 
-        extractedAntiguedad;
+        extractedAntiguedad ||
+        extractedValorCatastral; // Added
 
     if (hasSpecificDetails) {
         datosDetalladosObject = {
@@ -185,6 +189,7 @@ async function fetchParcelDetailsAndRespond(
             usoPrincipal: extractedUsoPrincipal,
             superficie: extractedSuperficie,
             antiguedad: extractedAntiguedad,
+            valorCatastral: extractedValorCatastral, // Added
         };
     } else {
       finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para el inmueble.` 
@@ -471,4 +476,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
-
