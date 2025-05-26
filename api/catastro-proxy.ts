@@ -26,12 +26,6 @@ interface CatastroParcel {
   [key: string]: any; 
 }
 
-// Helper to ensure a value is an array (for bi, lcons which can be single or array)
-function normalizeToArray<T>(item: T | T[] | undefined | null): T[] {
-  if (!item) return [];
-  return Array.isArray(item) ? item : [item];
-}
-
 async function fetchParcelDetailsAndRespond(
   res: VercelResponse,
   refCat: string,
@@ -97,7 +91,6 @@ async function fetchParcelDetailsAndRespond(
     }
     
     const detResult = detJson.Consulta_DNPRCResult;
-    // This log is fine here as detResult is now confirmed to exist.
     console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2)); 
 
     let finalMessage = contextMessage || '';
@@ -125,42 +118,16 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
 
-    // --- Start of new hierarchical data source determination ---
-    let topLevelDataSourceForItem: any = null;
-    let debiSource: any = null; // Specific to lrcdnp structure
-    let biSource: any = null;   // Specific to bico/bi structures
-    let dtSource: any = null;
-    let lconsSource: any = null; // Specific to bico/bi structures
-
+    let firstProperty: any = null;
     if (detResult.lrcdnp?.rcdnp && Array.isArray(detResult.lrcdnp.rcdnp) && detResult.lrcdnp.rcdnp.length > 0) {
-      topLevelDataSourceForItem = detResult.lrcdnp.rcdnp[0];
-      if (topLevelDataSourceForItem) {
-        debiSource = topLevelDataSourceForItem.debi;
-        dtSource = topLevelDataSourceForItem.dt;
-        // lcons is not typically a direct child of rcdnp items, antiquity is in debi.ant
-      }
-      console.log("Usando detResult.lrcdnp.rcdnp[0] como fuente de datos.");
-    } else if (detResult.bico && Array.isArray(detResult.bico) && detResult.bico.length > 0) {
-      topLevelDataSourceForItem = detResult.bico[0];
-      if (topLevelDataSourceForItem) {
-        biSource = topLevelDataSourceForItem.bi;
-        dtSource = topLevelDataSourceForItem.dt;
-        lconsSource = topLevelDataSourceForItem.lcons;
-      }
-      console.log("Usando detResult.bico[0] como fuente de datos (fallback desde lrcdnp).");
-    } else if (detResult.bi) {
-      topLevelDataSourceForItem = detResult; // The parent object itself is the top-level item
-      biSource = topLevelDataSourceForItem.bi;
-      dtSource = topLevelDataSourceForItem.dt;
-      lconsSource = topLevelDataSourceForItem.lcons;
-      console.log("Usando detResult (nivel superior) como fuente de datos (bi encontrado, fallback desde lrcdnp/bico).");
+      firstProperty = detResult.lrcdnp.rcdnp[0];
+      console.log("Usando detResult.lrcdnp.rcdnp[0] como fuente de datos principal.");
     }
-    // --- End of new hierarchical data source determination ---
 
-    if (!topLevelDataSourceForItem) {
-      console.warn(`No se encontró 'lrcdnp.rcdnp', 'bico' con elementos, ni 'bi' en detResult para RC ${refCat}.`);
-      finalMessage = finalMessage ? `${finalMessage}. No se encontró una estructura de datos de propiedad reconocible en la respuesta de Catastro.` 
-                                  : 'No se encontró una estructura de datos de propiedad reconocible en la respuesta de Catastro.';
+    if (!firstProperty) {
+      console.warn(`No se encontró 'lrcdnp.rcdnp' con elementos en detResult para RC ${refCat}.`);
+      finalMessage = finalMessage ? `${finalMessage}. No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.` 
+                                  : 'No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.';
       res.status(200).json({
         referenciaOriginal: refCat,
         direccionOriginalLDT: direccionLDT,
@@ -171,8 +138,8 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
     
-    // --- Start of new detail extraction based on determined sources ---
     let extractedDireccionCompleta: string | null = null;
+    const dtSource = firstProperty.dt;
     if (dtSource?.loc?.dir) {
         const dir = dtSource.loc.dir;
         const parts = [
@@ -186,38 +153,23 @@ async function fetchParcelDetailsAndRespond(
         ].filter(Boolean).join(' ').trim();
         if (parts) extractedDireccionCompleta = parts;
     }
-     if (!extractedDireccionCompleta || extractedDireccionCompleta === direccionLDT) { // Fallback or if constructed is same as LDT
-        extractedDireccionCompleta = direccionLDT; // Ensure it's at least LDT if available
+    if (!extractedDireccionCompleta || extractedDireccionCompleta === direccionLDT) { 
+        extractedDireccionCompleta = direccionLDT; 
     }
-
 
     let extractedUsoPrincipal: string | null = null;
     let extractedSuperficie: string | null = null;
     let extractedAntiguedad: string | null = null;
 
-    if (debiSource) { // Path for lrcdnp.rcdnp
+    const debiSource = firstProperty.debi;
+    if (debiSource) {
         extractedUsoPrincipal = debiSource.luso || null;
         extractedSuperficie = debiSource.sfc ? String(debiSource.sfc) : null;
         extractedAntiguedad = debiSource.ant ? String(debiSource.ant) : null;
-        console.log("Extrayendo detalles desde 'debiSource' (lrcdnp).");
-    } else { // Fallback paths for bico or bi
-        const normalizedBiArray = normalizeToArray(biSource);
-        const biDataToUse = normalizedBiArray.length > 0 ? normalizedBiArray[0] : null;
-
-        extractedUsoPrincipal = topLevelDataSourceForItem?.usoPrincipal || biDataToUse?.luso || null;
-        extractedSuperficie = topLevelDataSourceForItem?.superficie ? String(topLevelDataSourceForItem.superficie) 
-                                : (biDataToUse?.sfc ? String(biDataToUse.sfc) : null);
-        
-        extractedAntiguedad = topLevelDataSourceForItem?.antiguedad ? String(topLevelDataSourceForItem.antiguedad) : null;
-        if (!extractedAntiguedad) {
-            const normalizedLconsArray = normalizeToArray(lconsSource);
-            if (normalizedLconsArray.length > 0 && normalizedLconsArray[0]?.dfcons?.ant) {
-                extractedAntiguedad = String(normalizedLconsArray[0].dfcons.ant);
-            }
-        }
-        console.log("Extrayendo detalles desde 'biSource'/'lconsSource' (bico/bi fallback).");
+        console.log("Extrayendo detalles desde 'firstProperty.debi' (lrcdnp).");
+    } else {
+        console.warn("El primer inmueble en 'lrcdnp.rcdnp' no contiene la sub-propiedad 'debi'. No se pueden extraer detalles económicos.");
     }
-    // --- End of new detail extraction ---
     
     let datosDetalladosObject: CatastroInfoDataForProxy['datosDetallados'] = null;
 
@@ -235,8 +187,8 @@ async function fetchParcelDetailsAndRespond(
             antiguedad: extractedAntiguedad,
         };
     } else {
-      finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para la finca.` 
-                                  : `No se encontraron detalles adicionales significativos para la finca. Mostrando información básica.`;
+      finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para el inmueble.` 
+                                  : `No se encontraron detalles adicionales significativos para el inmueble. Mostrando información básica.`;
     }
 
     res.status(200).json({
