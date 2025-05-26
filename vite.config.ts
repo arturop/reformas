@@ -1,6 +1,14 @@
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+// Fix: Import necessary modules for ESM __dirname equivalent
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Fix: Define __filename and __dirname for ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // https://vitejs.dev/config/
 export default defineConfig({

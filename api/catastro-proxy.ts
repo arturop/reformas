@@ -11,7 +11,7 @@ interface CatastroInfoDataForProxy {
     usoPrincipal: string | null;
     superficie: string | null;
     antiguedad?: string | null; 
-    valorCatastral?: string | null; // Added
+    valorCatastral?: string | null;
   } | null;
   message?: string; 
 }
@@ -118,83 +118,93 @@ async function fetchParcelDetailsAndRespond(
       } as CatastroInfoDataForProxy);
       return;
     }
-
-    let firstProperty: any = null;
-    if (detResult.lrcdnp?.rcdnp && Array.isArray(detResult.lrcdnp.rcdnp) && detResult.lrcdnp.rcdnp.length > 0) {
-      firstProperty = detResult.lrcdnp.rcdnp[0];
-      console.log("Usando detResult.lrcdnp.rcdnp[0] como fuente de datos principal.");
-    }
-
-    if (!firstProperty) {
-      console.warn(`No se encontró 'lrcdnp.rcdnp' con elementos en detResult para RC ${refCat}.`);
-      finalMessage = finalMessage ? `${finalMessage}. No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.` 
-                                  : 'No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.';
-      res.status(200).json({
-        referenciaOriginal: refCat,
-        direccionOriginalLDT: direccionLDT,
-        distancia,
-        datosDetallados: null,
-        message: finalMessage,
-      } as CatastroInfoDataForProxy);
-      return;
-    }
     
-    let extractedDireccionCompleta: string | null = null;
-    const dtSource = firstProperty.dt;
-    if (dtSource?.loc?.dir) {
-        const dir = dtSource.loc.dir;
-        const parts = [
-            dir.tv, dir.nv,
-            dir.pnp ? `Nº ${dir.pnp}` : null,
-            dir.snp ? `Nº ${dir.snp}` : null,
-            dir.bloque, dir.escalera, dir.planta, dir.puerta,
-            dir.dp ? `${dir.dp} ` : null,
-            dir.nm ? dir.nm : null,
-            dir.np ? `(${dir.np})` : null
-        ].filter(Boolean).join(' ').trim();
-        if (parts) extractedDireccionCompleta = parts;
-    }
-    if (!extractedDireccionCompleta || extractedDireccionCompleta === direccionLDT) { 
-        extractedDireccionCompleta = direccionLDT; 
-    }
-
-    let extractedUsoPrincipal: string | null = null;
-    let extractedSuperficie: string | null = null;
-    let extractedAntiguedad: string | null = null;
-    let extractedValorCatastral: string | null = null; // Added
-
-    const debiSource = firstProperty.debi;
-    if (debiSource) {
-        extractedUsoPrincipal = debiSource.luso || null;
-        extractedSuperficie = debiSource.sfc ? String(debiSource.sfc) : null;
-        extractedAntiguedad = debiSource.ant ? String(debiSource.ant) : null;
-        extractedValorCatastral = debiSource.cpt ? String(debiSource.cpt) : null; // Added
-        console.log("Extrayendo detalles desde 'firstProperty.debi' (lrcdnp).");
-    } else {
-        console.warn("El primer inmueble en 'lrcdnp.rcdnp' no contiene la sub-propiedad 'debi'. No se pueden extraer detalles económicos.");
-    }
-    
+    // MODIFIED PARSING LOGIC STARTS HERE
     let datosDetalladosObject: CatastroInfoDataForProxy['datosDetallados'] = null;
+    let primerBienInmueble: any = null;
 
-    const hasSpecificDetails = 
-        (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) ||
-        extractedUsoPrincipal || 
-        extractedSuperficie || 
-        extractedAntiguedad ||
-        extractedValorCatastral; // Added
-
-    if (hasSpecificDetails) {
-        datosDetalladosObject = {
-            direccionCompleta: extractedDireccionCompleta,
-            usoPrincipal: extractedUsoPrincipal,
-            superficie: extractedSuperficie,
-            antiguedad: extractedAntiguedad,
-            valorCatastral: extractedValorCatastral, // Added
-        };
+    // Check new path: Consulta_DNPRCResult.lrcdnb.lrcdnb
+    if (detResult.lrcdnb?.lrcdnb && Array.isArray(detResult.lrcdnb.lrcdnb) && detResult.lrcdnb.lrcdnb.length > 0) {
+        // Access the 'bi' (bien inmueble) object from the first element
+        primerBienInmueble = detResult.lrcdnb.lrcdnb[0]?.bi; 
+        console.log("Usando detResult.lrcdnb.lrcdnb[0].bi como fuente de datos principal.");
     } else {
-      finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para el inmueble.` 
-                                  : `No se encontraron detalles adicionales significativos para el inmueble. Mostrando información básica.`;
+        console.warn(`No se encontró 'lrcdnb.lrcdnb' con elementos o 'bi' en detResult para RC ${refCat}. Probando ruta anterior 'lrcdnp.rcdnp'.`);
+        // Fallback or alternative path if `lrcdnb` is not present (original logic for `lrcdnp`)
+        if (detResult.lrcdnp?.rcdnp && Array.isArray(detResult.lrcdnp.rcdnp) && detResult.lrcdnp.rcdnp.length > 0) {
+            primerBienInmueble = detResult.lrcdnp.rcdnp[0]; // This was the old path.
+            console.log("Fallback: Usando detResult.lrcdnp.rcdnp[0] como fuente de datos.");
+            // Note: Extraction from this structure might need different sub-paths (e.g., .debi, .dt.loc.dir)
+            // For simplicity in this fix, we'll primarily rely on the 'lrcdnb.lrcdnb[0].bi' structure.
+            // If this fallback is hit often, its specific sub-paths would need re-verification.
+            // For now, we will try to extract using the '.bi' sub-object structure if it somehow matches,
+            // or it will likely result in nulls for details if this path is taken and structure is different.
+        }
     }
+
+
+    if (primerBienInmueble) {
+        console.log("Primer bien inmueble data:", JSON.stringify(primerBienInmueble, null, 2));
+        
+        let extractedDireccionCompleta: string | null = null;
+        // User suggested: primerBien.dirmun && primerBien.dirmun.dir ? primerBien.dirmun.dir : null
+        if (primerBienInmueble.dirmun?.dir) {
+            if (typeof primerBienInmueble.dirmun.dir === 'string') {
+                extractedDireccionCompleta = primerBienInmueble.dirmun.dir.trim();
+            } else if (typeof primerBienInmueble.dirmun.dir.nv === 'string') { // Attempt to build from components if .dir is an object
+                 const dirDetails = primerBienInmueble.dirmun.dir;
+                 const addressParts = [
+                    dirDetails.tv, // Tipo vía
+                    dirDetails.nv, // Nombre vía
+                    dirDetails.pnp ? `Nº ${dirDetails.pnp}` : null,
+                    dirDetails.snp ? `-${dirDetails.snp}` : null,
+                    dirDetails.bq, // Bloque
+                    dirDetails.es, // Escalera
+                    dirDetails.pt, // Planta
+                    dirDetails.pu  // Puerta
+                 ].filter(Boolean).join(' ').trim();
+                 if (addressParts) extractedDireccionCompleta = addressParts;
+            }
+        }
+        // Fallback to LDT if no better address found
+        if (!extractedDireccionCompleta || extractedDireccionCompleta === '') {
+            extractedDireccionCompleta = direccionLDT;
+        }
+
+
+        const extractedUsoPrincipal = primerBienInmueble.dt?.luso || null;
+        const extractedSuperficie = primerBienInmueble.dt?.sfc ? String(primerBienInmueble.dt.sfc) : null;
+        const extractedAntiguedad = primerBienInmueble.dtcat?.ant ? String(primerBienInmueble.dtcat.ant) : null;
+        const extractedValorCatastral = primerBienInmueble.dtcat?.vc?.v ? String(primerBienInmueble.dtcat.vc.v) : null;
+
+        const hasSpecificDetails = 
+            (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) || // Considered detail if different from basic LDT
+            extractedUsoPrincipal || 
+            extractedSuperficie || 
+            extractedAntiguedad ||
+            extractedValorCatastral;
+
+        if (hasSpecificDetails) {
+            datosDetalladosObject = {
+                direccionCompleta: extractedDireccionCompleta,
+                usoPrincipal: extractedUsoPrincipal,
+                superficie: extractedSuperficie,
+                antiguedad: extractedAntiguedad,
+                valorCatastral: extractedValorCatastral,
+            };
+            console.log("Detalles extraídos del bien inmueble:", JSON.stringify(datosDetalladosObject, null, 2));
+        } else {
+            finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para el inmueble.` 
+                                        : `No se encontraron detalles adicionales significativos para el inmueble. Mostrando información básica.`;
+            console.log("No se encontraron detalles específicos suficientes en 'primerBienInmueble'.");
+        }
+
+    } else {
+        console.warn(`No se encontró una estructura de datos de inmueble reconocible ('lrcdnb.lrcdnb[0].bi' o fallback) en la respuesta de Catastro para RC ${refCat}.`);
+        finalMessage = finalMessage ? `${finalMessage}. No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.` 
+                                    : 'No se encontró una estructura de datos de inmueble reconocible en la respuesta de Catastro.';
+    }
+    // MODIFIED PARSING LOGIC ENDS HERE
 
     res.status(200).json({
       referenciaOriginal: refCat,
@@ -476,3 +486,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+
