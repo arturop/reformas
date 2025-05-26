@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useEffect } from 'react';
 import proj4 from 'proj4';
 import '@/lib/projDefs'; // Ensure EPSG:23030 definition is loaded
@@ -95,6 +96,8 @@ const App: React.FC = () => {
 
       // If response.ok, then try to parse JSON
       const jsonData = await response.json() as ProxyResponse;
+      console.log('>>> App.tsx: jsonData received from proxy:', JSON.stringify(jsonData, null, 2));
+
 
       // Check for application-level errors within the JSON response
       if ('error' in jsonData) {

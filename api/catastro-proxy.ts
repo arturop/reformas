@@ -56,6 +56,8 @@ async function fetchParcelDetailsAndRespond(
     
     const detJson = JSON.parse(detBodyText); 
     const detResult = detJson.Consulta_DNPRCResult;
+    console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2));
+
 
     let finalMessage = contextMessage || '';
 
