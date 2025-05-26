@@ -14,6 +14,19 @@ interface CatastroInfoDataForProxy {
   message?: string; // For "no data" or partial success/context messages
 }
 
+// Define a type for the parcel structure within lpcd
+interface CatastroParcel {
+  pc: {
+    pc1: string;
+    pc2: string;
+    [key: string]: any; // Allow other properties within pc
+  };
+  ldt: string;
+  dis: string; // Note: this comes as a string from the service
+  [key: string]: any; // Allow other properties within a parcel
+}
+
+
 async function fetchParcelDetailsAndRespond(
   res: VercelResponse,
   refCat: string,
@@ -37,7 +50,8 @@ async function fetchParcelDetailsAndRespond(
 
     const detBodyText = await detRes.text();
     console.log(`>>> CAT DETAILS STATUS: ${detRes.status}`);
-    console.log(`>>> CAT DETAILS BODY: ${detBodyText}`);
+    // Avoid logging potentially very large bodies in production if not needed
+    // console.log(`>>> CAT DETAILS BODY: ${detBodyText}`); 
     
     const detJson = JSON.parse(detBodyText); 
     const detResult = detJson.Consulta_DNPRCResult;
@@ -83,7 +97,8 @@ async function fetchParcelDetailsAndRespond(
     }
     
     const bico = detResult?.bico;
-    const bi = bico && Array.isArray(bico.bi) ? bico.bi[0] : (bico?.bi || null);
+    // Handle cases where bico or bico.bi might not exist or not be an array
+    const bi = bico?.bi ? (Array.isArray(bico.bi) ? bico.bi[0] : bico.bi) : null;
 
     const usoPrincipal = bi?.luso || null;
     const superficie = bi?.sfc ? String(bi.sfc) : null;
@@ -123,7 +138,7 @@ async function buscarPorAnillos(
   srs: string
 ): Promise<boolean> { 
   const radios = [5, 10, 25, 50, 100]; 
-  const angulos = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]; 
+  const angulos = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, Math.PI / 4, 3 * Math.PI / 4, 5 * Math.PI / 4, 7 * Math.PI / 4]; // Added more angles
 
   console.log(`Iniciando búsqueda por anillos para ${originalUtmX}, ${originalUtmY}`);
 
@@ -149,10 +164,13 @@ async function buscarPorAnillos(
         const rres = await fetch(distanciaUrlAnillo, { method: 'GET', headers: { 'Accept': 'application/json' } });
         
         const ringBodyText = await rres.text();
-        console.log(`>>> CAT RING STATUS (${r}m, ${theta.toFixed(2)}rad): ${rres.status}`);
-        console.log(`>>> CAT RING BODY (${r}m, ${theta.toFixed(2)}rad): ${ringBodyText}`);
+        // console.log(`>>> CAT RING STATUS (${r}m, ${theta.toFixed(2)}rad): ${rres.status}`);
+        // console.log(`>>> CAT RING BODY (${r}m, ${theta.toFixed(2)}rad): ${ringBodyText.substring(0, 500)}`); // Log snippet
 
-        if (rres.status === 404) continue; 
+        if (rres.status === 404) {
+            console.warn(`Ring search: 404 para ${intentoX.toFixed(2)},${intentoY.toFixed(2)}.`);
+            continue; 
+        }
 
         if (!rres.ok) {
           console.warn(`Ring search: Consulta_RCCOOR_Distancia falló para ${intentoX.toFixed(2)},${intentoY.toFixed(2)} con status ${rres.status}`);
@@ -164,7 +182,7 @@ async function buscarPorAnillos(
 
         if (ringResult?.control?.cuerr === 0 && ringResult?.coordenadas_distancias?.coordd) {
           const coorddListRing = ringResult.coordenadas_distancias.coordd;
-          if (!coorddListRing) { // Should not happen if cuerr is 0, but good to check
+          if (!coorddListRing) { 
             console.warn("Ring search: 'coordd' is missing despite cuerr=0.");
             continue;
           }
@@ -187,7 +205,7 @@ async function buscarPorAnillos(
             continue;
           }
             
-          const targetParcelRing = parcelsRing[0]; 
+          const targetParcelRing = parcelsRing[0] as CatastroParcel; 
           if (targetParcelRing?.pc?.pc1 && targetParcelRing?.pc?.pc2) {
             const refCatFromRing = `${targetParcelRing.pc.pc1}${targetParcelRing.pc.pc2}`;
             const distanciaFromRing = targetParcelRing.dis ? Number(targetParcelRing.dis) : null;
@@ -208,9 +226,10 @@ async function buscarPorAnillos(
             console.warn("Ring search: Parcela encontrada no contiene referencia catastral completa (pc1, pc2):", JSON.stringify(targetParcelRing, null, 2));
           }
         } else {
-             // Log if cuerr > 0 or other issues
              if (ringResult?.control?.cuerr > 0) {
                 console.warn(`Ring search: Consulta_RCCOOR_Distancia devolvió error ${ringResult.control.cuerr} - ${ringResult.lerr?.err?.des || 'Error desconocido'}`);
+             } else {
+                console.warn(`Ring search: No parcel data or cuerr > 0 for ${intentoX.toFixed(2)},${intentoY.toFixed(2)}`);
              }
         }
       } catch (fetchErr: any) {
@@ -243,8 +262,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     'https://ovc.catastro.meh.es/OVCServWeb/' +
     'OVCWcfCallejero/COVCCoordenadas.svc/json/Consulta_RCCOOR_Distancia';
   const queryDist =
-    '?CoorX=' + encodeURIComponent(utmX) + 
-    '&CoorY=' + encodeURIComponent(utmY) + 
+    '?CoorX=' + encodeURIComponent(utmX.toFixed(2)) + // Catastro seems to prefer 2 decimal places for UTM
+    '&CoorY=' + encodeURIComponent(utmY.toFixed(2)) + 
     '&SRS=' + encodeURIComponent(srs);
   const distanciaUrl = baseDist + queryDist;
 
@@ -257,8 +276,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const distBodyText = await distRes.text();
-    console.log(`>>> CAT DIST STATUS (Initial): ${distRes.status}`);
-    console.log(`>>> CAT DIST BODY (Initial): ${distBodyText}`);
+    // console.log(`>>> CAT DIST STATUS (Initial): ${distRes.status}`);
+    // console.log(`>>> CAT DIST BODY (Initial): ${distBodyText.substring(0, 1000)}`); // Log snippet
 
 
     if (distRes.status === 404) {
@@ -267,7 +286,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!respondedFromRings) {
         res.status(200).json({
             referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
-            message: "No se encontró ninguna parcela catastral en un radio de hasta 100 metros alrededor de la ubicación proporcionada, ni en la búsqueda inicial (404)."
+            message: "No se encontró ninguna parcela catastral en la ubicación proporcionada (búsqueda inicial 404) ni en un radio de hasta 100 metros."
         } as CatastroInfoDataForProxy);
       }
       return; 
@@ -285,90 +304,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             errorCode = errDetails.cod || errorCode;
         }
         console.error("Error from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
-        res.status(distRes.ok ? 500 : distRes.status).json({ 
+        // For client, send application-level error, not necessarily the Catastro HTTP status
+        res.status(200).json({ 
             error: 'Error al consultar parcelas cercanas (inicial).',
-            details: `${errorMsg} (Código: ${errorCode})`
-        });
+            message: `${errorMsg} (Código: ${errorCode})`
+        } as CatastroInfoDataForProxy & { error: string }); // Explicitly type the error response
         return;
     }
     
     const coorddList = distResult?.coordenadas_distancias?.coordd;
     if (!coorddList) {
         console.warn("Estructura inesperada (sin coordd) from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
-        res.status(200).json({
-            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
-            message: 'Respuesta inesperada del servicio de distancia del Catastro (faltan datos de coordenadas_distancias en la respuesta inicial).'
-        } as CatastroInfoDataForProxy);
-        return;
-    }
-
-    const firstCoordd = Array.isArray(coorddList) ? coorddList[0] : coorddList;
-    if (!firstCoordd) {
-        console.warn("Estructura inesperada ('firstCoordd' es undefined) from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
-        res.status(200).json({
-            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
-            message: 'Respuesta inesperada del servicio de distancia del Catastro (no hay primer elemento de coordenadas en la respuesta inicial).'
-        } as CatastroInfoDataForProxy);
-        return;
-    }
-    
-    const parcelsRaw = firstCoordd.lpcd;
-    if (!parcelsRaw) {
-        console.warn("No 'lpcd' (parcel data array/object) found in firstCoordd (initial, 200 OK):", JSON.stringify(distJson, null, 2));
-        res.status(200).json({
-            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
-            message: "El servicio del Catastro respondió, pero no se encontraron datos de parcelas específicas (LPCD) en la respuesta inicial."
-        } as CatastroInfoDataForProxy);
-        return;
-    }
-
-    const parcels = Array.isArray(parcelsRaw) ? parcelsRaw : [parcelsRaw];
-    if (parcels.length === 0) {
-        console.warn("'lpcd' array is empty in firstCoordd (initial, 200 OK):", JSON.stringify(distJson, null, 2));
-        // At this point, it's possible the service found the *point* but no *parcels* at that point.
-        // This might be a valid case to try ring search.
-        console.log("Búsqueda inicial devolvió una lista vacía de parcelas (LPCD). Iniciando búsqueda por anillos.");
+        // Attempt ring search as Catastro response might be incomplete for the exact point
+        console.log("Respuesta inicial sin 'coordd'. Iniciando búsqueda por anillos.");
         const respondedFromRings = await buscarPorAnillos(res, utmX, utmY, srs);
         if (!respondedFromRings) {
             res.status(200).json({
                 referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
-                message: "No se encontró ninguna parcela catastral en un radio de hasta 100 metros alrededor de la ubicación proporcionada (búsqueda inicial y expandida)."
+                message: 'Respuesta inesperada del Catastro (faltan datos de coordenadas), y búsqueda por anillos no encontró resultados.'
             } as CatastroInfoDataForProxy);
         }
         return;
+    }
+
+    // Flatten all parcels from all coordd items
+    const todasParcels: CatastroParcel[] = [];
+    const coorddArray = Array.isArray(coorddList) ? coorddList : [coorddList];
+
+    for (const coorddItem of coorddArray) {
+        if (coorddItem && coorddItem.lpcd) {
+            const lpcdArray = Array.isArray(coorddItem.lpcd) ? coorddItem.lpcd : [coorddItem.lpcd];
+            for (const parcel of lpcdArray) {
+                if (parcel && parcel.pc && parcel.pc.pc1 && parcel.pc.pc2) {
+                    todasParcels.push(parcel as CatastroParcel);
+                }
+            }
+        }
     }
     
-    const closestParcel = parcels[0]; 
-
-    if (!closestParcel?.pc?.pc1 || !closestParcel?.pc?.pc2) {
-        console.warn("Parcela más cercana (inicial) no contiene referencia catastral completa (pc1, pc2):", JSON.stringify(closestParcel, null, 2));
+    if (todasParcels.length === 0) {
+      console.warn("Búsqueda inicial (después de aplanar todas las parcelas) no encontró referencias válidas. Iniciando búsqueda por anillos.");
+      const respondedFromRings = await buscarPorAnillos(res, utmX, utmY, srs);
+      if (!respondedFromRings) {
         res.status(200).json({
-            referenciaOriginal: null,
-            direccionOriginalLDT: closestParcel?.ldt || null,
-            distancia: closestParcel?.dis ? Number(closestParcel.dis) : null,
-            datosDetallados: null,
-            message: 'La parcela más cercana encontrada (inicial) no contiene una referencia catastral completa. Intentando búsqueda por anillos.'
+          referenciaOriginal: null,
+          direccionOriginalLDT: null,
+          distancia: null,
+          datosDetallados: null,
+          message: "No se encontró ninguna parcela catastral válida en la ubicación proporcionada ni en un radio de hasta 100 metros (búsqueda inicial y expandida)."
         } as CatastroInfoDataForProxy);
-        // Consider ring search here as well if primary ref is missing
-        const respondedFromRings = await buscarPorAnillos(res, utmX, utmY, srs);
-         if (!respondedFromRings) {
-            res.status(200).json({
-                referenciaOriginal: null,
-                direccionOriginalLDT: closestParcel?.ldt || null,
-                distancia: closestParcel?.dis ? Number(closestParcel.dis) : null,
-                datosDetallados: null,
-                message: 'La parcela más cercana encontrada (inicial) no contiene una referencia catastral completa, y la búsqueda por anillos no arrojó resultados.'
-            } as CatastroInfoDataForProxy);
-        }
-        return;
+      }
+      return;
     }
+    
+    const primeraParcelaValida = todasParcels[0]; 
 
-    const refCat = `${closestParcel.pc.pc1}${closestParcel.pc.pc2}`;
-    const distancia = closestParcel.dis ? Number(closestParcel.dis) : null;
-    const direccionLDT = closestParcel.ldt;
+    const refCat = `${primeraParcelaValida.pc.pc1}${primeraParcelaValida.pc.pc2}`;
+    const distancia = primeraParcelaValida.dis ? Number(primeraParcelaValida.dis) : null;
+    const direccionLDT = primeraParcelaValida.ldt;
 
-    console.log(`Parcela ${refCat} encontrada en la búsqueda inicial. Obteniendo detalles...`);
-    await fetchParcelDetailsAndRespond(res, refCat, direccionLDT, distancia, "Parcela encontrada en la búsqueda inicial.");
+    console.log(`Parcela ${refCat} (primera válida de la lista aplanada) encontrada en la búsqueda inicial. Obteniendo detalles...`);
+    await fetchParcelDetailsAndRespond(res, refCat, direccionLDT, distancia, "Parcela encontrada en la búsqueda inicial (primera válida de la lista completa).");
     return;
 
   } catch (err: any) {
@@ -377,9 +373,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Avoid sending detailed stack in production for security
     const errorDetails = (err instanceof Error && err.stack && process.env.NODE_ENV !== 'production') ? err.stack : (typeof err === 'object' ? JSON.stringify(err) : String(err));
     
-    res.status(500).json({
-      error: errorMessage,
-      details: process.env.NODE_ENV !== 'production' ? errorDetails : 'Detalles del error ocultos en producción.'
+    res.status(500).json({ // Use 500 for actual proxy internal errors
+      error: "Error interno del servidor proxy.", // Generic message for client
+      details: process.env.NODE_ENV !== 'production' ? errorDetails : undefined // Only send details in dev
     });
   }
 }
