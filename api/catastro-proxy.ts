@@ -97,7 +97,8 @@ async function fetchParcelDetailsAndRespond(
     }
     
     const detResult = detJson.Consulta_DNPRCResult;
-    console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2));
+    // This log is fine here as detResult is now confirmed to exist.
+    console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2)); 
 
     let finalMessage = contextMessage || '';
 
@@ -124,29 +125,42 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
 
-    let biSource: any = null;
-    let dtSource: any = null;
-    let lconsSource: any = null;
+    // --- Start of new hierarchical data source determination ---
     let topLevelDataSourceForItem: any = null;
+    let debiSource: any = null; // Specific to lrcdnp structure
+    let biSource: any = null;   // Specific to bico/bi structures
+    let dtSource: any = null;
+    let lconsSource: any = null; // Specific to bico/bi structures
 
-    if (detResult.bico && Array.isArray(detResult.bico) && detResult.bico.length > 0) {
+    if (detResult.lrcdnp?.rcdnp && Array.isArray(detResult.lrcdnp.rcdnp) && detResult.lrcdnp.rcdnp.length > 0) {
+      topLevelDataSourceForItem = detResult.lrcdnp.rcdnp[0];
+      if (topLevelDataSourceForItem) {
+        debiSource = topLevelDataSourceForItem.debi;
+        dtSource = topLevelDataSourceForItem.dt;
+        // lcons is not typically a direct child of rcdnp items, antiquity is in debi.ant
+      }
+      console.log("Usando detResult.lrcdnp.rcdnp[0] como fuente de datos.");
+    } else if (detResult.bico && Array.isArray(detResult.bico) && detResult.bico.length > 0) {
       topLevelDataSourceForItem = detResult.bico[0];
       if (topLevelDataSourceForItem) {
         biSource = topLevelDataSourceForItem.bi;
         dtSource = topLevelDataSourceForItem.dt;
         lconsSource = topLevelDataSourceForItem.lcons;
       }
-      console.log("Usando detResult.bico[0] como fuente de datos.");
+      console.log("Usando detResult.bico[0] como fuente de datos (fallback desde lrcdnp).");
     } else if (detResult.bi) {
-      topLevelDataSourceForItem = detResult;
+      topLevelDataSourceForItem = detResult; // The parent object itself is the top-level item
       biSource = topLevelDataSourceForItem.bi;
       dtSource = topLevelDataSourceForItem.dt;
       lconsSource = topLevelDataSourceForItem.lcons;
-      console.log("Usando detResult (nivel superior) como fuente de datos (bi encontrado).");
-    } else {
-      console.warn(`No se encontró 'bico' con elementos ni 'bi' en detResult para RC ${refCat}.`);
-      finalMessage = finalMessage ? `${finalMessage}. No se encontró información de Bien Inmueble (BI) o BICO en la respuesta de Catastro.` 
-                                  : 'No se encontró información de Bien Inmueble (BI) o BICO en la respuesta de Catastro.';
+      console.log("Usando detResult (nivel superior) como fuente de datos (bi encontrado, fallback desde lrcdnp/bico).");
+    }
+    // --- End of new hierarchical data source determination ---
+
+    if (!topLevelDataSourceForItem) {
+      console.warn(`No se encontró 'lrcdnp.rcdnp', 'bico' con elementos, ni 'bi' en detResult para RC ${refCat}.`);
+      finalMessage = finalMessage ? `${finalMessage}. No se encontró una estructura de datos de propiedad reconocible en la respuesta de Catastro.` 
+                                  : 'No se encontró una estructura de datos de propiedad reconocible en la respuesta de Catastro.';
       res.status(200).json({
         referenciaOriginal: refCat,
         direccionOriginalLDT: direccionLDT,
@@ -156,7 +170,8 @@ async function fetchParcelDetailsAndRespond(
       } as CatastroInfoDataForProxy);
       return;
     }
-
+    
+    // --- Start of new detail extraction based on determined sources ---
     let extractedDireccionCompleta: string | null = null;
     if (dtSource?.loc?.dir) {
         const dir = dtSource.loc.dir;
@@ -171,31 +186,43 @@ async function fetchParcelDetailsAndRespond(
         ].filter(Boolean).join(' ').trim();
         if (parts) extractedDireccionCompleta = parts;
     }
-    // Use LDT as fallback if specific address not found or same
-    if (!extractedDireccionCompleta || extractedDireccionCompleta === direccionLDT) {
-        extractedDireccionCompleta = direccionLDT;
+     if (!extractedDireccionCompleta || extractedDireccionCompleta === direccionLDT) { // Fallback or if constructed is same as LDT
+        extractedDireccionCompleta = direccionLDT; // Ensure it's at least LDT if available
     }
-    
-    const normalizedBiArray = normalizeToArray(biSource);
-    const biDataToUse = normalizedBiArray.length > 0 ? normalizedBiArray[0] : null;
 
-    const extractedUsoPrincipal = topLevelDataSourceForItem?.usoPrincipal || biDataToUse?.luso || null;
-    const extractedSuperficie = topLevelDataSourceForItem?.superficie ? String(topLevelDataSourceForItem.superficie) 
+
+    let extractedUsoPrincipal: string | null = null;
+    let extractedSuperficie: string | null = null;
+    let extractedAntiguedad: string | null = null;
+
+    if (debiSource) { // Path for lrcdnp.rcdnp
+        extractedUsoPrincipal = debiSource.luso || null;
+        extractedSuperficie = debiSource.sfc ? String(debiSource.sfc) : null;
+        extractedAntiguedad = debiSource.ant ? String(debiSource.ant) : null;
+        console.log("Extrayendo detalles desde 'debiSource' (lrcdnp).");
+    } else { // Fallback paths for bico or bi
+        const normalizedBiArray = normalizeToArray(biSource);
+        const biDataToUse = normalizedBiArray.length > 0 ? normalizedBiArray[0] : null;
+
+        extractedUsoPrincipal = topLevelDataSourceForItem?.usoPrincipal || biDataToUse?.luso || null;
+        extractedSuperficie = topLevelDataSourceForItem?.superficie ? String(topLevelDataSourceForItem.superficie) 
                                 : (biDataToUse?.sfc ? String(biDataToUse.sfc) : null);
-    
-    let extractedAntiguedad: string | null = topLevelDataSourceForItem?.antiguedad ? String(topLevelDataSourceForItem.antiguedad) : null;
-    if (!extractedAntiguedad) {
-        const normalizedLconsArray = normalizeToArray(lconsSource);
-        if (normalizedLconsArray.length > 0 && normalizedLconsArray[0]?.dfcons?.ant) {
-            extractedAntiguedad = String(normalizedLconsArray[0].dfcons.ant);
+        
+        extractedAntiguedad = topLevelDataSourceForItem?.antiguedad ? String(topLevelDataSourceForItem.antiguedad) : null;
+        if (!extractedAntiguedad) {
+            const normalizedLconsArray = normalizeToArray(lconsSource);
+            if (normalizedLconsArray.length > 0 && normalizedLconsArray[0]?.dfcons?.ant) {
+                extractedAntiguedad = String(normalizedLconsArray[0].dfcons.ant);
+            }
         }
+        console.log("Extrayendo detalles desde 'biSource'/'lconsSource' (bico/bi fallback).");
     }
+    // --- End of new detail extraction ---
     
     let datosDetalladosObject: CatastroInfoDataForProxy['datosDetallados'] = null;
 
-    // Only create datosDetallados if we have at least one specific detail
     const hasSpecificDetails = 
-        (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) || // Only count if different from basic LDT
+        (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) ||
         extractedUsoPrincipal || 
         extractedSuperficie || 
         extractedAntiguedad;
@@ -405,7 +432,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (parseError: any) {
         console.error(`Error parsing JSON from initial Consulta_RCCOOR_Distancia:`, parseError, `Body text (first 500 chars): ${distBodyText.substring(0, 500)}`);
         res.status(200).json({
-            // error: 'Error al interpretar la respuesta inicial del Catastro (no es JSON válido).', // error field not in type
             referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
             message: 'Error al interpretar la respuesta inicial del Catastro (no es JSON válido).'
         } as CatastroInfoDataForProxy);
@@ -424,7 +450,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         console.error("Error from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
         res.status(200).json({ 
-            // error: 'Error al consultar parcelas cercanas (inicial).', // error field not in type
             referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
             message: `Error al consultar parcelas cercanas (inicial): ${errorMsg} (Código: ${errorCode})`
         } as CatastroInfoDataForProxy);
