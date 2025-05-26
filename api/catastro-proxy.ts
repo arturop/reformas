@@ -10,30 +10,34 @@ interface CatastroInfoDataForProxy {
     direccionCompleta: string | null;
     usoPrincipal: string | null;
     superficie: string | null;
-    antiguedad?: string | null; // Added for construction year
+    antiguedad?: string | null; 
   } | null;
-  message?: string; // For "no data" or partial success/context messages
+  message?: string; 
 }
 
-// Define a type for the parcel structure within lpcd
 interface CatastroParcel {
   pc: {
     pc1: string;
     pc2: string;
-    [key: string]: any; // Allow other properties within pc
+    [key: string]: any; 
   };
   ldt: string;
-  dis: string; // Note: this comes as a string from the service
-  [key: string]: any; // Allow other properties within a parcel
+  dis: string; 
+  [key: string]: any; 
 }
 
+// Helper to ensure a value is an array (for bi, lcons which can be single or array)
+function normalizeToArray<T>(item: T | T[] | undefined | null): T[] {
+  if (!item) return [];
+  return Array.isArray(item) ? item : [item];
+}
 
 async function fetchParcelDetailsAndRespond(
   res: VercelResponse,
   refCat: string,
   direccionLDT: string,
   distancia: number | null,
-  contextMessage?: string // Optional message (e.g., from ring search)
+  contextMessage?: string 
 ): Promise<void> {
   const baseDet =
     'https://ovc.catastro.meh.es/OVCServWeb/' +
@@ -95,12 +99,10 @@ async function fetchParcelDetailsAndRespond(
     const detResult = detJson.Consulta_DNPRCResult;
     console.log('>>> CAT DETAILS JSON (Consulta_DNPRCResult):', JSON.stringify(detResult, null, 2));
 
-
     let finalMessage = contextMessage || '';
 
-    // Check for errors within Consulta_DNPRCResult if it exists
     if (detResult?.control?.cuerr > 0) {
-      let errorMsg = 'Error al obtener detalles de la finca.';
+      let errorMsg = 'Error al obtener detalles de la finca desde Catastro.';
       let errorCode = detResult?.control?.cuerr || 'N/A';
       if (detResult?.lerr?.err) {
         const errDetails = Array.isArray(detResult.lerr.err) ? detResult.lerr.err[0] : detResult.lerr.err;
@@ -122,9 +124,42 @@ async function fetchParcelDetailsAndRespond(
       return;
     }
 
-    let direccionCompleta = direccionLDT; 
-    if (detResult?.dt?.loc?.dir) {
-        const dir = detResult.dt.loc.dir;
+    let biSource: any = null;
+    let dtSource: any = null;
+    let lconsSource: any = null;
+    let topLevelDataSourceForItem: any = null;
+
+    if (detResult.bico && Array.isArray(detResult.bico) && detResult.bico.length > 0) {
+      topLevelDataSourceForItem = detResult.bico[0];
+      if (topLevelDataSourceForItem) {
+        biSource = topLevelDataSourceForItem.bi;
+        dtSource = topLevelDataSourceForItem.dt;
+        lconsSource = topLevelDataSourceForItem.lcons;
+      }
+      console.log("Usando detResult.bico[0] como fuente de datos.");
+    } else if (detResult.bi) {
+      topLevelDataSourceForItem = detResult;
+      biSource = topLevelDataSourceForItem.bi;
+      dtSource = topLevelDataSourceForItem.dt;
+      lconsSource = topLevelDataSourceForItem.lcons;
+      console.log("Usando detResult (nivel superior) como fuente de datos (bi encontrado).");
+    } else {
+      console.warn(`No se encontró 'bico' con elementos ni 'bi' en detResult para RC ${refCat}.`);
+      finalMessage = finalMessage ? `${finalMessage}. No se encontró información de Bien Inmueble (BI) o BICO en la respuesta de Catastro.` 
+                                  : 'No se encontró información de Bien Inmueble (BI) o BICO en la respuesta de Catastro.';
+      res.status(200).json({
+        referenciaOriginal: refCat,
+        direccionOriginalLDT: direccionLDT,
+        distancia,
+        datosDetallados: null,
+        message: finalMessage,
+      } as CatastroInfoDataForProxy);
+      return;
+    }
+
+    let extractedDireccionCompleta: string | null = null;
+    if (dtSource?.loc?.dir) {
+        const dir = dtSource.loc.dir;
         const parts = [
             dir.tv, dir.nv,
             dir.pnp ? `Nº ${dir.pnp}` : null,
@@ -134,36 +169,54 @@ async function fetchParcelDetailsAndRespond(
             dir.nm ? dir.nm : null,
             dir.np ? `(${dir.np})` : null
         ].filter(Boolean).join(' ').trim();
-        if (parts) direccionCompleta = parts;
+        if (parts) extractedDireccionCompleta = parts;
+    }
+    // Use LDT as fallback if specific address not found or same
+    if (!extractedDireccionCompleta || extractedDireccionCompleta === direccionLDT) {
+        extractedDireccionCompleta = direccionLDT;
     }
     
-    const bico = detResult?.bico;
-    const bi = bico?.bi ? (Array.isArray(bico.bi) ? bico.bi[0] : bico.bi) : null;
+    const normalizedBiArray = normalizeToArray(biSource);
+    const biDataToUse = normalizedBiArray.length > 0 ? normalizedBiArray[0] : null;
 
-    const usoPrincipal = detResult?.usoPrincipal || bi?.luso || null;
-    const superficie = detResult?.superficie ? String(detResult.superficie) : (bi?.sfc ? String(bi.sfc) : null);
+    const extractedUsoPrincipal = topLevelDataSourceForItem?.usoPrincipal || biDataToUse?.luso || null;
+    const extractedSuperficie = topLevelDataSourceForItem?.superficie ? String(topLevelDataSourceForItem.superficie) 
+                                : (biDataToUse?.sfc ? String(biDataToUse.sfc) : null);
     
-    let antiguedad: string | null = detResult?.antiguedad ? String(detResult.antiguedad) : null;
-    if (!antiguedad) {
-        const lcons = detResult?.lcons;
-        if (lcons && Array.isArray(lcons) && lcons.length > 0) {
-            const primeraConstruccion = lcons[0];
-            if (primeraConstruccion?.dfcons?.ant) {
-                antiguedad = String(primeraConstruccion.dfcons.ant);
-            }
+    let extractedAntiguedad: string | null = topLevelDataSourceForItem?.antiguedad ? String(topLevelDataSourceForItem.antiguedad) : null;
+    if (!extractedAntiguedad) {
+        const normalizedLconsArray = normalizeToArray(lconsSource);
+        if (normalizedLconsArray.length > 0 && normalizedLconsArray[0]?.dfcons?.ant) {
+            extractedAntiguedad = String(normalizedLconsArray[0].dfcons.ant);
         }
+    }
+    
+    let datosDetalladosObject: CatastroInfoDataForProxy['datosDetallados'] = null;
+
+    // Only create datosDetallados if we have at least one specific detail
+    const hasSpecificDetails = 
+        (extractedDireccionCompleta && extractedDireccionCompleta !== direccionLDT) || // Only count if different from basic LDT
+        extractedUsoPrincipal || 
+        extractedSuperficie || 
+        extractedAntiguedad;
+
+    if (hasSpecificDetails) {
+        datosDetalladosObject = {
+            direccionCompleta: extractedDireccionCompleta,
+            usoPrincipal: extractedUsoPrincipal,
+            superficie: extractedSuperficie,
+            antiguedad: extractedAntiguedad,
+        };
+    } else {
+      finalMessage = finalMessage ? `${finalMessage}. No se encontraron detalles adicionales significativos para la finca.` 
+                                  : `No se encontraron detalles adicionales significativos para la finca. Mostrando información básica.`;
     }
 
     res.status(200).json({
       referenciaOriginal: refCat,
       direccionOriginalLDT: direccionLDT,
       distancia,
-      datosDetallados: {
-        direccionCompleta: direccionCompleta,
-        usoPrincipal: usoPrincipal,
-        superficie: superficie,
-        antiguedad: antiguedad,
-      },
+      datosDetallados: datosDetalladosObject,
       message: finalMessage || undefined, 
     } as CatastroInfoDataForProxy);
 
@@ -352,9 +405,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (parseError: any) {
         console.error(`Error parsing JSON from initial Consulta_RCCOOR_Distancia:`, parseError, `Body text (first 500 chars): ${distBodyText.substring(0, 500)}`);
         res.status(200).json({
-            error: 'Error al interpretar la respuesta inicial del Catastro (no es JSON válido).',
-            message: 'No se pudo procesar la respuesta del servicio de Catastro.'
-        } as CatastroInfoDataForProxy & { error: string });
+            // error: 'Error al interpretar la respuesta inicial del Catastro (no es JSON válido).', // error field not in type
+            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
+            message: 'Error al interpretar la respuesta inicial del Catastro (no es JSON válido).'
+        } as CatastroInfoDataForProxy);
         return;
     }
     
@@ -370,9 +424,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         console.error("Error from Consulta_RCCOOR_Distancia (initial):", JSON.stringify(distJson, null, 2));
         res.status(200).json({ 
-            error: 'Error al consultar parcelas cercanas (inicial).',
-            message: `${errorMsg} (Código: ${errorCode})`
-        } as CatastroInfoDataForProxy & { error: string });
+            // error: 'Error al consultar parcelas cercanas (inicial).', // error field not in type
+            referenciaOriginal: null, direccionOriginalLDT: null, distancia: null, datosDetallados: null,
+            message: `Error al consultar parcelas cercanas (inicial): ${errorMsg} (Código: ${errorCode})`
+        } as CatastroInfoDataForProxy);
         return;
     }
     
@@ -439,3 +494,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+
