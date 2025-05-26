@@ -1,5 +1,4 @@
 
-
 import React, { useState, useCallback, useEffect } from 'react';
 import proj4 from 'proj4';
 import '@/lib/projDefs'; // Ensure EPSG:23030 definition is loaded
@@ -83,26 +82,36 @@ const App: React.FC = () => {
         body: JSON.stringify({ utmX, utmY, srs: srsForCatastro }),
       });
       
+      // Check if the HTTP response itself is not OK (e.g., 404, 500)
+      if (!response.ok) {
+        const errorText = await response.text(); // Get error text from server
+        console.error(`Error from proxy: Status ${response.status}`, errorText);
+        setCatastroError(`Error del servidor (proxy): ${response.status} - ${errorText.substring(0, 150)}${errorText.length > 150 ? '...' : ''}`);
+        setCatastroInfo(null); // Ensure no stale data
+        setIsFetchingCatastroInfo(false);
+        return;
+      }
+
+      // If response.ok, then try to parse JSON
       const jsonData = await response.json() as ProxyResponse;
 
-      if (!response.ok || 'error' in jsonData) {
+      // Check for application-level errors within the JSON response
+      if ('error' in jsonData) {
         const errorResponse = jsonData as ProxyErrorResponse;
         const errorMessage = errorResponse.details || errorResponse.error || JSON.stringify(jsonData);
-        console.error("Error desde el proxy o Catastro:", response.status, errorMessage, JSON.stringify(jsonData, null, 2));
-        setCatastroError(`Error del servicio: ${errorMessage}. (Status: ${response.status})`);
+        console.error("Error devuelto en JSON por el proxy o Catastro:", errorMessage, JSON.stringify(jsonData, null, 2));
+        setCatastroError(`Error del servicio: ${errorMessage}.`);
         
-        // Handle partial data if proxy returns it alongside an error object
-        if (errorResponse.referenciaOriginal || errorResponse.message) { // Check for message as well
+        if (errorResponse.referenciaOriginal || errorResponse.message) {
             setCatastroInfo({
                 referenciaOriginal: errorResponse.referenciaOriginal || null,
                 direccionOriginalLDT: errorResponse.direccionOriginalLDT || null,
                 distancia: errorResponse.distancia || null,
-                datosDetallados: null, // Assume details are missing if there's an error for them
+                datosDetallados: null,
                 message: errorResponse.message || "No se pudieron obtener todos los detalles.",
             });
         }
       } else {
-         // jsonData is ProxySuccessResponse (CatastroInfoData)
         setCatastroInfo(jsonData as ProxySuccessResponse);
         if (jsonData.message) { 
             console.info("Mensaje del proxy Catastro:", jsonData.message);
@@ -110,10 +119,13 @@ const App: React.FC = () => {
       }
     } catch (e: any) {
       console.error("Error al procesar la solicitud al proxy del Catastro:", e);
+      // This catch block will now primarily handle network errors or if response.json() fails 
+      // for reasons other than a non-ok HTTP status (which should be rare if response.ok was true).
       if (e instanceof SyntaxError && e.message.toLowerCase().includes('json')) {
-        setCatastroError(`Error: La respuesta del proxy no fue JSON válido. ${e.message}`);
+        // This can still happen if response.ok was true but the body was not valid JSON
+        setCatastroError(`Error: La respuesta del proxy no fue JSON válido a pesar de un estado OK. ${e.message}`);
       } else {
-        setCatastroError(`Error al procesar la solicitud al proxy: ${e.message}`);
+        setCatastroError(`Error de red o al procesar la solicitud al proxy: ${e.message}`);
       }
     } finally {
       setIsFetchingCatastroInfo(false);
@@ -342,3 +354,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
