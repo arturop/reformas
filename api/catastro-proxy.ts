@@ -10,6 +10,7 @@ interface CatastroInfoDataForProxy {
     direccionCompleta: string | null;
     usoPrincipal: string | null;
     superficie: string | null;
+    antiguedad?: string | null; // Added for construction year
   } | null;
   message?: string; // For "no data" or partial success/context messages
 }
@@ -102,6 +103,15 @@ async function fetchParcelDetailsAndRespond(
 
     const usoPrincipal = bi?.luso || null;
     const superficie = bi?.sfc ? String(bi.sfc) : null;
+    
+    let antiguedad: string | null = null;
+    const lcons = detResult?.lcons;
+    if (lcons && Array.isArray(lcons) && lcons.length > 0) {
+        const primeraConstruccion = lcons[0];
+        if (primeraConstruccion?.dfcons?.ant) {
+            antiguedad = String(primeraConstruccion.dfcons.ant);
+        }
+    }
 
     res.status(200).json({
       referenciaOriginal: refCat,
@@ -111,6 +121,7 @@ async function fetchParcelDetailsAndRespond(
         direccionCompleta: direccionCompleta,
         usoPrincipal: usoPrincipal,
         superficie: superficie,
+        antiguedad: antiguedad,
       },
       message: finalMessage || undefined, 
     } as CatastroInfoDataForProxy);
