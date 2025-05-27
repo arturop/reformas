@@ -1,3 +1,4 @@
+
 {
   "version": 2,
   "builds": [
@@ -18,7 +19,7 @@
     },
     { 
       "src": "/(.*)",
-      "dest": "/app.html"
+      "dest": "/index.html" 
     }
   ]
 }

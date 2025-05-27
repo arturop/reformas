@@ -1,9 +1,13 @@
 
-
 import React, { useState, useCallback, useEffect } from 'react';
 import proj4 from 'proj4';
-import '@/lib/projDefs'; // Ensure EPSG:23030 definition is loaded
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import type { TaxonomyNode, ClassifiedJobInfo } from './types'; // Explicit relative path
+import taxonomyData from './taxonomy.json'; // Explicit relative path
 
+import './lib/projDefs'; // Ensure EPSG:23030 definition is loaded
+
+// Existing CatastroInfoData and ProxyResponse types
 interface CatastroInfoData {
   referenciaOriginal: string | null;
   direccionOriginalLDT: string | null;
@@ -13,16 +17,14 @@ interface CatastroInfoData {
     usoPrincipal: string | null;
     superficie: string | null;
     antiguedad?: string | null;
-    valorCatastral?: string | null; // Added
+    valorCatastral?: string | null;
   } | null;
   message?: string;
 }
 
-// Types for proxy response
 type ProxyErrorResponse = { 
   error: string; 
   details?: string; 
-  // Include fields from CatastroInfoData if proxy might return partial data on error
   referenciaOriginal?: string | null;
   direccionOriginalLDT?: string | null;
   distancia?: number | null;
@@ -31,18 +33,33 @@ type ProxyErrorResponse = {
 type ProxySuccessResponse = CatastroInfoData;
 type ProxyResponse = ProxyErrorResponse | ProxySuccessResponse;
 
+// Initialize Gemini AI Client
+let ai: GoogleGenAI | null = null;
+const apiKey = import.meta.env.VITE_API_KEY;
+
+if (apiKey) {
+  ai = new GoogleGenAI({ apiKey });
+} else {
+  console.error("VITE_API_KEY environment variable not set. Job classification will not work.");
+}
 
 const App: React.FC = () => {
+  // --- Job Classification States ---
+  const [userJobRequestText, setUserJobRequestText] = useState<string>('');
+  const [classifiedJobInfo, setClassifiedJobInfo] = useState<ClassifiedJobInfo | null>(null);
+  const [isClassifyingJob, setIsClassifyingJob] = useState<boolean>(false);
+  const [classificationError, setClassificationError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<'jobInput' | 'catastroView'>('jobInput');
+
+  // --- GeoCatastro States (existing) ---
   const [coordinates, setCoordinates] = useState<GeolocationCoordinates | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState<boolean>(false);
   const [isNonSecureContext, setIsNonSecureContext] = useState<boolean>(false);
-
   const [catastroInfo, setCatastroInfo] = useState<CatastroInfoData | null>(null);
   const [catastroError, setCatastroError] = useState<string | null>(null);
   const [isFetchingCatastroInfo, setIsFetchingCatastroInfo] = useState<boolean>(false);
   const [showApiWarning, setShowApiWarning] = useState<boolean>(true);
-
   const [utmCoordinatesForDisplay, setUtmCoordinatesForDisplay] = useState<{x: number, y: number, srs: string} | null>(null);
 
   useEffect(() => {
@@ -51,6 +68,99 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- Job Classification Logic ---
+  const handleClassifyJob = async () => {
+    if (!userJobRequestText.trim()) {
+      setClassificationError("Por favor, describe el trabajo que necesitas.");
+      return;
+    }
+    if (!ai) {
+      setClassificationError("El servicio de clasificación no está disponible (API Key no configurada correctamente).");
+      console.error("Gemini AI client not initialized. Ensure VITE_API_KEY is set.");
+      return;
+    }
+
+    setIsClassifyingJob(true);
+    setClassificationError(null);
+    setClassifiedJobInfo(null);
+
+    const prompt = `
+Analiza la siguiente descripción de un proyecto de reforma proporcionada por el usuario.
+Tu tarea es clasificar esta descripción según la siguiente taxonomía de trabajos de reforma.
+Identifica el trabajo más específico y relevante de la taxonomía que coincida con la descripción del usuario.
+Asegúrate de ser robusto a pequeños errores ortográficos o gramaticales en la entrada del usuario.
+
+Taxonomía:
+${JSON.stringify(taxonomyData, null, 2)}
+
+Descripción del usuario:
+"${userJobRequestText}"
+
+Debes devolver tu respuesta ÚNICAMENTE en formato JSON con la siguiente estructura:
+{
+  "job_id": "string (el ID del nodo de la taxonomía coincidente, ej. IV.11.1)",
+  "job_label": "string (la etiqueta 'label' del nodo de la taxonomía coincidente, ej. 'Bañera → plato de ducha')",
+  "level": "number (el nivel 'level' del nodo de la taxonomía coincidente, ej. 4)",
+  "confidence_score": "number (un valor entre 0.0 y 1.0 que indique tu confianza en la clasificación, siendo 1.0 la máxima confianza)",
+  "raw_user_text": "string (el texto original del usuario que has analizado)"
+}
+
+Asegúrate de que 'job_id', 'job_label' y 'level' correspondan exactamente a un nodo existente en la taxonomía proporcionada.
+Si la descripción es ambigua o no encaja claramente, elige el nodo más apropiado y refleja la incertidumbre en 'confidence_score'.
+La 'raw_user_text' debe ser una copia exacta del texto del usuario.
+`;
+
+    try {
+      // Note: The 'contents' structure for Gemini has evolved. 
+      // The models.generateContent expects `contents: string` or `contents: { parts: Part[] }` or `contents: Content[]`.
+      // For a simple text prompt, a direct string or the object structure is fine.
+      // Using `[{ role: "user", parts: [{text: prompt}] }]` is more aligned with chat history but works.
+      // A simpler `contents: prompt` would also work for single-turn text.
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17', 
+        contents: prompt, // Simplified for single text prompt
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+
+      let jsonStr = response.text.trim();
+      const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
+      const match = jsonStr.match(fenceRegex);
+      if (match && match[2]) {
+        jsonStr = match[2].trim();
+      }
+      
+      const resultData = JSON.parse(jsonStr) as ClassifiedJobInfo;
+
+      if (resultData && typeof resultData.job_id === 'string' && typeof resultData.job_label === 'string') {
+        setClassifiedJobInfo(resultData);
+      } else {
+        throw new Error("Respuesta de clasificación inválida o formato incorrecto.");
+      }
+
+    } catch (error: any) {
+      console.error("Error clasificando el trabajo:", error);
+      setClassificationError(`Error al clasificar: ${error.message || 'Ocurrió un error desconocido.'}`);
+      setClassifiedJobInfo(null);
+    } finally {
+      setIsClassifyingJob(false);
+    }
+  };
+  
+  const proceedToCatastroView = () => {
+    if (classifiedJobInfo) {
+      setCurrentStep('catastroView');
+      setCoordinates(null);
+      setLocationError(null);
+      setCatastroInfo(null);
+      setCatastroError(null);
+      setUtmCoordinatesForDisplay(null);
+    }
+  };
+
+
+  // --- GeoCatastro Logic (existing, slightly adapted) ---
   const fetchCatastroInfo = async (geoCoords: GeolocationCoordinates) => {
     setIsFetchingCatastroInfo(true);
     setCatastroInfo(null);
@@ -85,22 +195,17 @@ const App: React.FC = () => {
         body: JSON.stringify({ utmX, utmY, srs: srsForCatastro }),
       });
       
-      // Check if the HTTP response itself is not OK (e.g., 404, 500)
       if (!response.ok) {
-        const errorText = await response.text(); // Get error text from server
+        const errorText = await response.text();
         console.error(`Error from proxy: Status ${response.status}`, errorText);
         setCatastroError(`Error del servidor (proxy): ${response.status} - ${errorText.substring(0, 150)}${errorText.length > 150 ? '...' : ''}`);
-        setCatastroInfo(null); // Ensure no stale data
+        setCatastroInfo(null);
         setIsFetchingCatastroInfo(false);
         return;
       }
 
-      // If response.ok, then try to parse JSON
       const jsonData = await response.json() as ProxyResponse;
-      console.log('>>> App.tsx: jsonData received from proxy:', JSON.stringify(jsonData, null, 2));
 
-
-      // Check for application-level errors within the JSON response
       if ('error' in jsonData) {
         const errorResponse = jsonData as ProxyErrorResponse;
         const errorMessage = errorResponse.details || errorResponse.error || JSON.stringify(jsonData);
@@ -124,10 +229,7 @@ const App: React.FC = () => {
       }
     } catch (e: any) {
       console.error("Error al procesar la solicitud al proxy del Catastro:", e);
-      // This catch block will now primarily handle network errors or if response.json() fails 
-      // for reasons other than a non-ok HTTP status (which should be rare if response.ok was true).
       if (e instanceof SyntaxError && e.message.toLowerCase().includes('json')) {
-        // This can still happen if response.ok was true but the body was not valid JSON
         setCatastroError(`Error: La respuesta del proxy no fue JSON válido a pesar de un estado OK. ${e.message}`);
       } else {
         setCatastroError(`Error de red o al procesar la solicitud al proxy: ${e.message}`);
@@ -137,12 +239,11 @@ const App: React.FC = () => {
     }
   };
 
-  // useEffect to fetch Catastro info when coordinates are available
   useEffect(() => {
-    if (coordinates) {
+    if (coordinates && currentStep === 'catastroView') { // Only fetch if in catastro view and coords are set
       fetchCatastroInfo(coordinates);
     }
-  }, [coordinates]); // Re-run when coordinates change
+  }, [coordinates, currentStep]);
 
   const handleGetLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -153,24 +254,24 @@ const App: React.FC = () => {
 
     setIsLoadingLocation(true);
     setLocationError(null);
-    setCoordinates(null); // Clear previous coordinates
+    setCoordinates(null); 
     setCatastroInfo(null);
     setCatastroError(null);
     setUtmCoordinatesForDisplay(null);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setCoordinates(position.coords); // Set coordinates, which will trigger the useEffect
+        setCoordinates(position.coords); 
         setIsLoadingLocation(false);
       },
       (err) => {
         let errorMessage = "Ocurrió un error al obtener la ubicación.";
         switch (err.code) {
           case err.PERMISSION_DENIED:
-            errorMessage = "Permiso de ubicación denegado. Por favor, habilita el acceso a la ubicación en la configuración de tu navegador o para este sitio.";
+            errorMessage = "Permiso de ubicación denegado. Por favor, habilita el acceso a la ubicación.";
             break;
           case err.POSITION_UNAVAILABLE:
-            errorMessage = "Información de ubicación no disponible en este momento.";
+            errorMessage = "Información de ubicación no disponible.";
             break;
           case err.TIMEOUT:
             errorMessage = "Se agotó el tiempo de espera para obtener la ubicación.";
@@ -183,29 +284,14 @@ const App: React.FC = () => {
     );
   }, []);
 
-
-  // Determine button text and state
-  let buttonText = 'Obtener Ubicación y Datos Catastrales';
-  let isButtonBusy = isLoadingLocation || isFetchingCatastroInfo;
-  if (isLoadingLocation) {
-    buttonText = 'Obteniendo Ubicación...';
-  } else if (isFetchingCatastroInfo) {
-    buttonText = 'Consultando Catastro...';
-  }
-
+  // --- UI Rendering ---
   const renderCatastroData = () => {
     if (!catastroInfo) return null;
-
-    // Don't render this section if the primary info (refCat) is missing and there's a specific "no parcel" message
-    // The "no parcel" message is handled by renderAlerts
-    if (!catastroInfo.referenciaOriginal && catastroInfo.message) {
-        return null;
-    }
+    if (!catastroInfo.referenciaOriginal && catastroInfo.message) return null;
 
     return (
       <div className="space-y-4" role="region" aria-labelledby="catastro-data-heading">
         <h3 id="catastro-data-heading" className="sr-only">Información Catastral Detallada</h3>
-        
         {catastroInfo.referenciaOriginal && (
             <div className="p-4 bg-white rounded-lg shadow-lg">
                 <h4 className="text-lg font-semibold text-slate-700 mb-2">Finca Más Cercana</h4>
@@ -216,7 +302,6 @@ const App: React.FC = () => {
                 )}
             </div>
         )}
-
         {catastroInfo.datosDetallados && (
           <div className="p-4 bg-white rounded-lg shadow-lg">
             <h4 className="text-lg font-semibold text-slate-700 mb-2">Detalles de la Finca</h4>
@@ -227,8 +312,6 @@ const App: React.FC = () => {
             {catastroInfo.datosDetallados.valorCatastral && <p className="text-sm text-slate-600"><strong>Valor Catastral:</strong> {catastroInfo.datosDetallados.valorCatastral}</p>} 
           </div>
         )}
-        {/* This message is for partial data scenarios where primary data might exist but details failed, 
-            and the proxy attached a specific message about that failure. */}
         {catastroInfo.message && catastroInfo.referenciaOriginal && (!catastroInfo.datosDetallados || Object.values(catastroInfo.datosDetallados).every(v => v === null || v === 'N/A' || v === '')) && (
              <div className="p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
                 <p className="font-bold">Nota Adicional</p>
@@ -263,7 +346,7 @@ const App: React.FC = () => {
     );
   };
 
-  const renderAlerts = () => {
+  const renderGeoCatastroAlerts = () => {
     if (locationError) {
       return (
         <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
@@ -277,12 +360,10 @@ const App: React.FC = () => {
         <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
           <p className="font-bold">Error de Información Catastral</p>
           <p>{catastroError}</p>
-          {/* Render partial Catastro info if available even with error and message exists */}
           {catastroInfo && catastroInfo.referenciaOriginal && catastroInfo.message && renderCatastroData()}
         </div>
       );
     }
-    // Handle "no parcel found" message from proxy (200 OK, but no refCat and a message)
     if (catastroInfo && !catastroInfo.referenciaOriginal && catastroInfo.message) {
         return (
             <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
@@ -292,7 +373,6 @@ const App: React.FC = () => {
             </div>
         );
     }
-    // Fallback message if no specific data was found after a successful-looking flow but catastroInfo is null
     if (coordinates && !isLoadingLocation && !isFetchingCatastroInfo && !catastroError && !locationError && !catastroInfo) {
         return (
             <div className="mt-4 p-3 bg-amber-100 border-l-4 border-amber-500 text-amber-700 rounded" role="status">
@@ -303,13 +383,110 @@ const App: React.FC = () => {
     return null;
   }
 
+  // --- Conditional Rendering for Steps ---
+  if (currentStep === 'jobInput') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-sky-600 to-indigo-700 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans antialiased">
+        <div className="bg-white bg-opacity-25 backdrop-blur-lg shadow-2xl rounded-xl p-6 sm:p-8 max-w-lg w-full text-slate-800">
+          <header className="mb-6 text-center">
+            <h1 className="text-4xl font-bold text-slate-700">Describa su Proyecto</h1>
+            <p className="text-sm text-slate-600 mt-1">Ayúdenos a entender qué necesita para ofrecerle la mejor información.</p>
+          </header>
+
+          {!apiKey && ( // Check if the original apiKey constant is falsy
+            <div className="mb-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
+                <p className="font-bold">Servicio no disponible</p>
+                <p className="text-sm">La clasificación de proyectos no está disponible actualmente. Por favor, asegúrese de que la API Key de Gemini (VITE_API_KEY) esté configurada en las variables de entorno de Vercel.</p>
+            </div>
+          )}
+
+          <div className="mb-4">
+            <label htmlFor="jobRequestText" className="block text-sm font-medium text-slate-700 mb-1">
+              ¿Qué tipo de reforma o trabajo necesita?
+            </label>
+            <textarea
+              id="jobRequestText"
+              rows={4}
+              className="w-full p-2 border border-slate-300 rounded-md shadow-sm focus:ring-cyan-500 focus:border-cyan-500 text-slate-700 placeholder-slate-400"
+              placeholder="Ej: Quiero cambiar la bañera por un plato de ducha y pintar el salón."
+              value={userJobRequestText}
+              onChange={(e) => setUserJobRequestText(e.target.value)}
+              aria-label="Descripción del proyecto de reforma"
+              disabled={isClassifyingJob || !ai}
+            />
+          </div>
+
+          <button
+            onClick={handleClassifyJob}
+            disabled={isClassifyingJob || !userJobRequestText.trim() || !ai}
+            className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-live="polite"
+            aria-busy={isClassifyingJob}
+          >
+            {isClassifyingJob && <span className="inline-block animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></span>}
+            {isClassifyingJob ? 'Clasificando Proyecto...' : 'Clasificar Proyecto'}
+          </button>
+
+          {classificationError && (
+            <div className="mt-4 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded" role="alert">
+              <p className="font-bold">Error de Clasificación</p>
+              <p>{classificationError}</p>
+            </div>
+          )}
+
+          {classifiedJobInfo && (
+            <div className="mt-6 p-4 bg-green-50 border-l-4 border-green-500 text-green-700 rounded-lg shadow">
+              <h3 className="text-lg font-semibold text-green-800 mb-2">Proyecto Identificado</h3>
+              <p><strong>Tipo de Trabajo:</strong> {classifiedJobInfo.job_label}</p>
+              <p><strong>Confianza:</strong> {(classifiedJobInfo.confidence_score * 100).toFixed(0)}%</p>
+              <p className="text-xs mt-1"><strong>ID:</strong> {classifiedJobInfo.job_id}, <strong>Nivel:</strong> {classifiedJobInfo.level}</p>
+              <button
+                onClick={proceedToCatastroView}
+                className="mt-4 w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-opacity-75"
+              >
+                Continuar y Obtener Datos Catastrales
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // --- GeoCatastro View (currentStep === 'catastroView') ---
+  let geoCatastroButtonText = 'Obtener Ubicación y Datos Catastrales';
+  let isGeoCatastroButtonBusy = isLoadingLocation || isFetchingCatastroInfo;
+  if (isLoadingLocation) {
+    geoCatastroButtonText = 'Obteniendo Ubicación...';
+  } else if (isFetchingCatastroInfo) {
+    geoCatastroButtonText = 'Consultando Catastro...';
+  }
+  
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-600 to-indigo-700 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans antialiased">
       <div className="bg-white bg-opacity-25 backdrop-blur-lg shadow-2xl rounded-xl p-6 sm:p-8 max-w-lg w-full text-slate-800">
+        <button 
+            onClick={() => {
+                setCurrentStep('jobInput');
+            }}
+            className="mb-4 text-sm text-cyan-600 hover:text-cyan-800 underline"
+            aria-label="Volver a describir el proyecto"
+        >
+            &larr; Cambiar descripción del proyecto
+        </button>
         <header className="mb-6 text-center">
           <h1 className="text-4xl font-bold text-slate-700">GeoCatastro</h1>
           <p className="text-sm text-slate-600 mt-1">Consulta la información catastral de tu ubicación</p>
         </header>
+
+        {classifiedJobInfo && (
+          <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700 rounded-lg shadow">
+            <h3 className="text-lg font-semibold text-blue-800 mb-2">Proyecto Seleccionado</h3>
+            <p><strong>Tipo de Trabajo:</strong> {classifiedJobInfo.job_label}</p>
+            <p><strong>Confianza de Clasificación:</strong> {(classifiedJobInfo.confidence_score * 100).toFixed(0)}%</p>
+            <p className="text-xs mt-1"><strong>ID de Trabajo:</strong> {classifiedJobInfo.job_id}</p>
+          </div>
+        )}
 
         {isNonSecureContext && (
           <div className="mb-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 rounded" role="alert">
@@ -335,24 +512,19 @@ const App: React.FC = () => {
         <div className="mb-6">
           <button
             onClick={handleGetLocation}
-            disabled={isButtonBusy}
+            disabled={isGeoCatastroButtonBusy}
             className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-live="polite"
-            aria-busy={isButtonBusy}
+            aria-busy={isGeoCatastroButtonBusy}
           >
-            {/* Spinner can be added here if desired, e.g. an SVG */}
-            {isButtonBusy && <span className="inline-block animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></span>}
-            {buttonText}
+            {isGeoCatastroButtonBusy && <span className="inline-block animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></span>}
+            {geoCatastroButtonText}
           </button>
         </div>
         
-        {renderAlerts()}
-
-        {/* Display Catastro Info if available */}
-        {/* Updated condition: renderCatastroData if there's a refCat, OR if there's a message about partial data (even if refCat is there) */}
-        {catastroInfo && (catastroInfo.referenciaOriginal || (catastroInfo.message && !catastroError)) && renderCatastroData()}
+        {renderGeoCatastroAlerts()}
         
-        {/* Display Coordinates Info if available and no locationError */}
+        {catastroInfo && (catastroInfo.referenciaOriginal || (catastroInfo.message && !catastroError)) && renderCatastroData()}
         {(coordinates || utmCoordinatesForDisplay) && !locationError && renderCoordinatesData()}
 
       </div> 
