@@ -1,9 +1,11 @@
-
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
-    "./index.html", // Updated from app.html to index.html
-    "./**/*.{js,ts,jsx,tsx}",
+    "./index.html",
+    "./App.tsx",
+    "./index.tsx",
+    "./lib/**/*.ts", // If you add components with Tailwind classes here
+    // Add other specific paths if you have UI components elsewhere
   ],
   theme: {
     extend: {
