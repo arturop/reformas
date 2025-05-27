@@ -11,7 +11,7 @@ Esta aplicación te permite obtener información catastral básica (referencia y
 *   Implementa una búsqueda por anillos crecientes si la consulta inicial no devuelve resultados inmediatos.
 *   Muestra la referencia catastral, dirección (LDT y detallada), distancia, uso principal y superficie de la finca más cercana si está disponible.
 *   Manejo de errores de geolocalización, del proxy y del servicio del Catastro, con mensajes informativos para el usuario.
-*   Interfaz responsiva y moderna, construida con React, TypeScript y Tailwind CSS.
+*   Interfaz responsiva y moderna construida con React, TypeScript y Tailwind CSS.
 
 ## Arquitectura
 
