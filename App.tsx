@@ -5,7 +5,7 @@ import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import type { TaxonomyNode, ClassifiedJobInfo } from './types'; // Explicit relative path
 import taxonomyData from './taxonomy.json'; // Explicit relative path
 
-import './lib/projDefs'; // Ensure EPSG:23030 definition is loaded
+import './lib/projDefs'; // Ensure EPSG:23030 definition is loaded (side-effect import)
 
 // Existing CatastroInfoData and ProxyResponse types
 interface CatastroInfoData {
